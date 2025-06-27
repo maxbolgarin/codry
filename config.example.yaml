@@ -1,0 +1,131 @@
+server:
+  address: ":8080"
+  endpoint: "/webhook"
+  timeout: 30s
+
+# GitLab Configuration Example
+provider:
+  type: "gitlab"  # Supported: gitlab, github, bitbucket
+  base_url: "https://gitlab.158-160-60-159.sslip.io/"  # Leave empty for gitlab.com
+  token: "${GITLAB_TOKEN}"
+  webhook_secret: "${GITLAB_WEBHOOK_SECRET}"
+  bot_username: "codry-bot"
+  rate_limit_wait: 1m
+
+# GitHub Configuration Example
+# provider:
+#   type: "github"  # Supported: gitlab, github, bitbucket
+#   base_url: "https://github.com"  # Leave empty for github.com, or use GitHub Enterprise URL
+#   token: "${GITHUB_TOKEN}"  # GitHub Personal Access Token or GitHub App token
+#   webhook_secret: "${GITHUB_WEBHOOK_SECRET}"  # GitHub webhook secret
+#   bot_username: "codry-bot"  # GitHub username of the bot
+#   rate_limit_wait: 1m
+
+# Bitbucket Configuration Example
+# provider:
+#   type: "bitbucket"  # Supported: gitlab, github, bitbucket
+#   base_url: "https://api.bitbucket.org"  # Leave empty for bitbucket.org, or use Bitbucket Server URL
+#   token: "${BITBUCKET_TOKEN}"  # Bitbucket App Password or OAuth token
+#   webhook_secret: "${BITBUCKET_WEBHOOK_SECRET}"  # Bitbucket webhook secret
+#   bot_username: "codry-bot"  # Bitbucket username of the bot
+#   rate_limit_wait: 1m
+
+# Gemini AI Agent Configuration (Default)
+agent:
+  type: "gemini"  # Supported: gemini, openai, claude
+  api_key: "${GEMINI_API_KEY}"
+  model: "gemini-2.5-flash-preview-05-20"  # or "gemini-2.5-pro-preview-06-05"
+  proxy_url: "${GEMINI_PROXY_URL}"  # Optional
+  max_retries: 3
+  retry_delay: 5s
+  temperature: 0.1
+  max_tokens: 4000
+
+# OpenAI Agent Configuration
+# agent:
+#   type: "openai"  # Supported: gemini, openai, claude
+#   api_key: "${OPENAI_API_KEY}"  # OpenAI API key (sk-...)
+#   model: "gpt-4o-mini"  # Options: gpt-4o, gpt-4o-mini, gpt-3.5-turbo, gpt-4-turbo
+#   base_url: ""  # Optional: Custom API endpoint (Azure OpenAI, local models)
+#   max_retries: 3
+#   retry_delay: 5s
+#   temperature: 0.1
+#   max_tokens: 4000
+
+# Claude Agent Configuration
+# agent:
+#   type: "claude"  # Supported: gemini, openai, claude
+#   api_key: "${CLAUDE_API_KEY}"  # Anthropic API key
+#   model: "claude-3-5-haiku-20241022"  # Options: claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022, claude-3-opus-20240229
+#   max_retries: 3
+#   retry_delay: 5s
+#   temperature: 0.1
+#   max_tokens: 4000
+
+# Azure OpenAI Configuration Example
+# agent:
+#   type: "openai"
+#   api_key: "${AZURE_OPENAI_API_KEY}"
+#   model: "gpt-4o"  # Your deployment name
+#   base_url: "https://your-resource.openai.azure.com"
+#   max_retries: 3
+#   retry_delay: 5s
+#   temperature: 0.1
+#   max_tokens: 4000
+
+# Local LLM Configuration (OpenAI Compatible)
+# agent:
+#   type: "openai"
+#   api_key: "dummy"  # Not used for local models
+#   model: "llama3"  # Model name for your local setup
+#   base_url: "http://localhost:11434"  # Ollama or other local endpoint
+#   max_retries: 3
+#   retry_delay: 5s
+#   temperature: 0.1
+#   max_tokens: 4000
+
+review:
+  file_filter:
+    max_file_size: 10000  # Skip files larger than this (in characters)
+    allowed_extensions:
+      - ".go"
+      - ".js"
+      - ".ts"
+      - ".py"
+      - ".java"
+      - ".cpp"
+      - ".c"
+      - ".cs"
+      - ".php"
+      - ".rb"
+      - ".rs"
+      - ".kt"
+      - ".swift"
+      - ".yaml"
+      - ".yml"
+      - ".json"
+      - ".xml"
+      - ".toml"
+      - ".sql"
+      - ".md"
+      - ".dockerfile"
+      - ".sh"
+      - ".bash"
+    excluded_paths:
+      - "vendor/"
+      - "node_modules/"
+      - ".git/"
+      - "dist/"
+      - "build/"
+      - "target/"
+      - "*.min.js"
+      - "*.min.css"
+      - "*.bundle.js"
+      - "*.generated.*"
+    include_only_code: false
+  max_files_per_mr: 50
+  update_description_on_mr: true
+  enable_description_generation: true
+  enable_code_review: true
+  min_files_for_description: 3
+  processing_delay: 5s 

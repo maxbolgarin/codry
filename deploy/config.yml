@@ -1,0 +1,15 @@
+gitlab:
+  token: "{{ GITLAB_TOKEN }}"
+  webhook_secret: "{{ GITLAB_WEBHOOK_SECRET }}"
+
+  gitlab_base_url: ""
+  bot_username: "mr-reviewer-bot"
+  webhook_addr: ":8080"
+
+agent:
+  api_key: ""
+  proxy_url: ""
+  model_name: "gemini-2.5-flash"
+
+logger:
+  level: "debug"
