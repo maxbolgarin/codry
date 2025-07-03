@@ -1,77 +1,82 @@
 package main
 
 import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/ilyakaznacheev/cleanenv"
-	"github.com/maxbolgarin/codry/internal/agent"
-	"github.com/maxbolgarin/codry/internal/gitlab"
-	"gitlab.158-160-60-159.sslip.io/astra-monitoring-icl/go-lib/errs"
-	"gitlab.158-160-60-159.sslip.io/astra-monitoring-icl/go-lib/logger"
-	"gitlab.158-160-60-159.sslip.io/astra-monitoring-icl/go-lib/metrics"
-	"gitlab.158-160-60-159.sslip.io/astra-monitoring-icl/go-lib/panicsafe"
-	"gitlab.158-160-60-159.sslip.io/astra-monitoring-icl/go-lib/shutdowner"
+	"github.com/maxbolgarin/codry/internal/app"
+	"github.com/maxbolgarin/codry/internal/config"
+	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/logze/v2"
 )
-
-type Config struct {
-	GitLabConfig gitlab.Config        `yaml:"gitlab"`
-	AgentConfig  agent.Config         `yaml:"agent"`
-	LoggerConfig metrics.LoggerConfig `yaml:"logger"`
-}
 
 var (
 	Version, Branch, Commit, BuildDate string
 )
 
 func main() {
-	config := kingpin.Flag("config", "path to config file").Short('c').String()
+	configPath := kingpin.Flag("config", "path to config file").Short('c').String()
 	kingpin.Parse()
 
-	info := metrics.GetStartInfo("GitLab MR Reviewer", Branch, Commit, BuildDate)
-	println(info)
+	// Print version info
+	logze.Info("starting codry",
+		"version", Version,
+		"branch", Branch,
+		"commit", Commit,
+		"build_date", BuildDate,
+	)
 
-	sd := shutdowner.New()
+	// Create context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	var err error
-	defer sd.ShutdownWithExit(&err)
+	// Handle shutdown signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		logze.Info("received shutdown signal")
+		cancel()
+	}()
 
-	if err := run(sd, *config); err != nil {
-		logger.Error(err, "cannot start")
-		return
+	if err := run(ctx, *configPath); err != nil {
+		logze.Fatal(err, "application failed")
 	}
-
-	sd.Wait()
 }
 
-func run(ctx shutdowner.Context, configFile string) (err error) {
-	defer panicsafe.RecoverWithErrAndStack(&err)
-
-	cfg := Config{}
+func run(ctx context.Context, configFile string) error {
+	// Load configuration
+	cfg := &config.Config{}
 	if configFile == "" {
-		if err := cleanenv.ReadEnv(&cfg); err != nil {
-			return errs.Wrap(err, "failed to read config")
+		if err := cleanenv.ReadEnv(cfg); err != nil {
+			return errm.Wrap(err, "failed to read config from environment")
 		}
 	} else {
-		if err := cleanenv.ReadConfig(configFile, &cfg); err != nil {
-			return errs.Wrap(err, "failed to read config")
+		if err := cleanenv.ReadConfig(configFile, cfg); err != nil {
+			return errm.Wrap(err, "failed to read config file")
 		}
 	}
 
-	if err := metrics.InitLogger(ctx, cfg.LoggerConfig); err != nil {
-		return errs.Wrap(err, "failed to init logger")
-	}
+	// Create logger
+	logger := logze.With("service", "codry")
 
-	gemini, err := agent.NewGemini(ctx, cfg.AgentConfig)
+	// Create and initialize service
+	codeReviewService, err := app.NewCodeReviewService(cfg, logger)
 	if err != nil {
-		return errs.Wrap(err, "failed to create agent")
+		return errm.Wrap(err, "failed to create code review service")
 	}
 
-	gitlabClient, err := gitlab.New(cfg.GitLabConfig, gemini)
-	if err != nil {
-		return errs.Wrap(err, "failed to create gitlab client")
+	if err := codeReviewService.Initialize(ctx); err != nil {
+		return errm.Wrap(err, "failed to initialize code review service")
 	}
 
-	if err := gitlabClient.StartWebhookServer(ctx); err != nil {
-		return errs.Wrap(err, "failed to start webhook server")
+	// Start service (this will block until context is cancelled)
+	if err := codeReviewService.Start(ctx); err != nil {
+		return errm.Wrap(err, "failed to start code review service")
 	}
 
 	return nil

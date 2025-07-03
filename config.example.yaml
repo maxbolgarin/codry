@@ -47,6 +47,7 @@ agent:
 #   api_key: "${OPENAI_API_KEY}"  # OpenAI API key (sk-...)
 #   model: "gpt-4o-mini"  # Options: gpt-4o, gpt-4o-mini, gpt-3.5-turbo, gpt-4-turbo
 #   base_url: ""  # Optional: Custom API endpoint (Azure OpenAI, local models)
+#   proxy_url: "${OPENAI_PROXY_URL}"  # Optional: Proxy URL (http://proxy:8080 or socks5://proxy:1080)
 #   max_retries: 3
 #   retry_delay: 5s
 #   temperature: 0.1
@@ -57,6 +58,7 @@ agent:
 #   type: "claude"  # Supported: gemini, openai, claude
 #   api_key: "${CLAUDE_API_KEY}"  # Anthropic API key
 #   model: "claude-3-5-haiku-20241022"  # Options: claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022, claude-3-opus-20240229
+#   proxy_url: "${CLAUDE_PROXY_URL}"  # Optional: Proxy URL (http://proxy:8080 or socks5://proxy:1080)
 #   max_retries: 3
 #   retry_delay: 5s
 #   temperature: 0.1
@@ -68,6 +70,7 @@ agent:
 #   api_key: "${AZURE_OPENAI_API_KEY}"
 #   model: "gpt-4o"  # Your deployment name
 #   base_url: "https://your-resource.openai.azure.com"
+#   proxy_url: "${AZURE_PROXY_URL}"  # Optional: Proxy URL
 #   max_retries: 3
 #   retry_delay: 5s
 #   temperature: 0.1
