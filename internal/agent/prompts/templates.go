@@ -5,9 +5,10 @@ import (
 	"strings"
 
 	"github.com/maxbolgarin/codry/internal/model"
+	"github.com/maxbolgarin/codry/internal/model/interfaces"
 )
 
-var _ model.PromptBuilder = &Builder{}
+var _ interfaces.PromptBuilder = &Builder{}
 
 // Builder provides methods to build prompts with language support
 type Builder struct {
@@ -15,8 +16,8 @@ type Builder struct {
 }
 
 // NewBuilder creates a new template builder with language configuration
-func NewBuilder(languageCode model.Language) *Builder {
-	lang, exists := DefaultLanguages[languageCode]
+func NewBuilder(language model.Language) *Builder {
+	lang, exists := DefaultLanguages[language]
 	if !exists {
 		lang = DefaultLanguages[model.LanguageEnglish] // Default to English
 	}
@@ -79,6 +80,18 @@ func (tb *Builder) BuildSummaryPrompt(changes []*model.FileDiff) model.Prompt {
 	}
 
 	userPrompt := fmt.Sprintf(summaryUserPromptTemplate, len(changes), tb.countTotalLines(changes), len(changes), changesText.String())
+
+	return model.Prompt{
+		SystemPrompt: systemPrompt,
+		UserPrompt:   userPrompt,
+		Language:     tb.language.Language,
+	}
+}
+
+// BuildCommentReplyPrompt creates a prompt for generating a reply to a comment
+func (tb *Builder) BuildCommentReplyPrompt(originalComment, replyContext string) model.Prompt {
+	systemPrompt := fmt.Sprintf(commentReplySystemPromptTemplate, tb.language.Instructions)
+	userPrompt := fmt.Sprintf(commentReplyUserPromptTemplate, originalComment, replyContext)
 
 	return model.Prompt{
 		SystemPrompt: systemPrompt,

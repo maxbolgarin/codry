@@ -7,6 +7,7 @@ import (
 
 	"github.com/maxbolgarin/cliex"
 	"github.com/maxbolgarin/codry/internal/model"
+	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/errm"
 	"gitlab.158-160-60-159.sslip.io/astra-monitoring-icl/go-lib/lang"
 )
@@ -16,7 +17,7 @@ const (
 	defaultBaseURL = "https://api.anthropic.com"
 )
 
-var _ model.AgentAPI = (*Agent)(nil)
+var _ interfaces.AgentAPI = (*Agent)(nil)
 
 // Agent implements the AIAgent interface using Anthropic's Claude API
 type Agent struct {

@@ -14,11 +14,12 @@ import (
 
 	"github.com/maxbolgarin/cliex"
 	"github.com/maxbolgarin/codry/internal/model"
+	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/logze/v2"
 )
 
-var _ model.CodeProvider = (*Provider)(nil)
+var _ interfaces.CodeProvider = (*Provider)(nil)
 
 const (
 	defaultBaseURL = "https://api.bitbucket.org/2.0"
@@ -101,9 +102,9 @@ func (p *Provider) ParseWebhookEvent(payload []byte) (*model.CodeEvent, error) {
 	}
 
 	// Map Bitbucket reviewers to our format
-	var reviewers []*model.User
+	var reviewers []model.User
 	for _, reviewer := range bitbucketPayload.PullRequest.Reviewers {
-		reviewers = append(reviewers, &model.User{
+		reviewers = append(reviewers, model.User{
 			ID:       reviewer.User.UUID,
 			Username: reviewer.User.Username,
 			Name:     reviewer.User.DisplayName,
@@ -129,8 +130,7 @@ func (p *Provider) ParseWebhookEvent(payload []byte) (*model.CodeEvent, error) {
 			URL:          bitbucketPayload.PullRequest.Links.HTML.Href,
 			State:        strings.ToLower(bitbucketPayload.PullRequest.State),
 			SHA:          bitbucketPayload.PullRequest.Source.Commit.Hash,
-			AuthorID:     bitbucketPayload.PullRequest.Author.UUID,
-			Author: &model.User{
+			Author: model.User{
 				ID:       bitbucketPayload.PullRequest.Author.UUID,
 				Username: bitbucketPayload.PullRequest.Author.Username,
 				Name:     bitbucketPayload.PullRequest.Author.DisplayName,
@@ -161,9 +161,9 @@ func (p *Provider) GetMergeRequest(ctx context.Context, projectID string, mrIID 
 	}
 
 	// Convert reviewers
-	var reviewers []*model.User
+	var reviewers []model.User
 	for _, reviewer := range pr.Reviewers {
-		reviewers = append(reviewers, &model.User{
+		reviewers = append(reviewers, model.User{
 			ID:       reviewer.User.UUID,
 			Username: reviewer.User.Username,
 			Name:     reviewer.User.DisplayName,
@@ -184,8 +184,7 @@ func (p *Provider) GetMergeRequest(ctx context.Context, projectID string, mrIID 
 		URL:          pr.Links.HTML.Href,
 		State:        strings.ToLower(pr.State),
 		SHA:          pr.Source.Commit.Hash,
-		AuthorID:     pr.Author.UUID,
-		Author: &model.User{
+		Author: model.User{
 			ID:       pr.Author.UUID,
 			Username: pr.Author.Username,
 			Name:     pr.Author.DisplayName,
@@ -234,7 +233,7 @@ func (p *Provider) UpdateMergeRequestDescription(ctx context.Context, projectID 
 	apiURL := fmt.Sprintf("repositories/%s/%s/pullrequests/%d", workspace, repoSlug, mrIID)
 
 	// Prepare request body
-	updateData := map[string]interface{}{
+	updateData := map[string]any{
 		"description": description,
 	}
 
@@ -247,7 +246,7 @@ func (p *Provider) UpdateMergeRequestDescription(ctx context.Context, projectID 
 }
 
 // CreateComment creates a comment on the pull request
-func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID int, comment *model.ReviewComment) error {
+func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID int, comment *model.Comment) error {
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
@@ -259,15 +258,15 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 	apiURL := fmt.Sprintf("repositories/%s/%s/pullrequests/%d/comments", workspace, repoSlug, mrIID)
 
 	// Prepare comment data
-	commentData := map[string]interface{}{
-		"content": map[string]interface{}{
+	commentData := map[string]any{
+		"content": map[string]any{
 			"raw": comment.Body,
 		},
 	}
 
 	// Add inline comment data if file path and line are specified
 	if comment.FilePath != "" && comment.Line > 0 {
-		commentData["inline"] = map[string]interface{}{
+		commentData["inline"] = map[string]any{
 			"path": comment.FilePath,
 			"to":   comment.Line,
 		}
@@ -282,7 +281,7 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 }
 
 // GetComments retrieves comments from a pull request
-func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.ReviewComment, error) {
+func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.Comment, error) {
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
@@ -299,14 +298,14 @@ func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int)
 		return nil, errm.Wrap(err, "failed to get comments from Bitbucket")
 	}
 
-	var comments []*model.ReviewComment
+	var comments []*model.Comment
 	for _, comment := range response.Values {
-		reviewComment := &model.ReviewComment{
+		reviewComment := &model.Comment{
 			ID:       strconv.Itoa(comment.ID),
 			Body:     comment.Content.Raw,
 			FilePath: comment.Inline.Path,
 			Line:     comment.Inline.To,
-			Author: &model.User{
+			Author: model.User{
 				ID:       comment.User.UUID,
 				Username: comment.User.Username,
 				Name:     comment.User.DisplayName,
@@ -475,7 +474,7 @@ func (p *Provider) IsCommentEvent(event *model.CodeEvent) bool {
 // ReplyToComment replies to an existing comment
 func (p *Provider) ReplyToComment(ctx context.Context, projectID string, mrIID int, commentID string, reply string) error {
 	// Bitbucket doesn't have threaded comments, so we create a new comment with reference
-	comment := &model.ReviewComment{
+	comment := &model.Comment{
 		Body: fmt.Sprintf("Reply to comment %s: %s", commentID, reply),
 	}
 	return p.CreateComment(ctx, projectID, mrIID, comment)
@@ -504,10 +503,9 @@ func (p *Provider) GetComment(ctx context.Context, projectID string, mrIID int, 
 	updatedAt, _ := time.Parse(time.RFC3339, comment.UpdatedOn)
 
 	return &model.Comment{
-		ID:       strconv.Itoa(comment.ID),
-		Body:     comment.Content.Raw,
-		AuthorID: comment.User.UUID,
-		Author: &model.User{
+		ID:   strconv.Itoa(comment.ID),
+		Body: comment.Content.Raw,
+		Author: model.User{
 			ID:       comment.User.UUID,
 			Username: comment.User.Username,
 			Name:     comment.User.DisplayName,
@@ -594,9 +592,9 @@ func (p *Provider) ListMergeRequests(ctx context.Context, projectID string, filt
 		}
 
 		// Convert reviewers
-		var reviewers []*model.User
+		var reviewers []model.User
 		for _, reviewer := range pr.Reviewers {
-			reviewers = append(reviewers, &model.User{
+			reviewers = append(reviewers, model.User{
 				ID:       reviewer.User.UUID,
 				Username: reviewer.User.Username,
 				Name:     reviewer.User.DisplayName,
@@ -613,8 +611,7 @@ func (p *Provider) ListMergeRequests(ctx context.Context, projectID string, filt
 			URL:          pr.Links.HTML.Href,
 			State:        strings.ToLower(pr.State),
 			SHA:          pr.Source.Commit.Hash,
-			AuthorID:     pr.Author.UUID,
-			Author: &model.User{
+			Author: model.User{
 				ID:       pr.Author.UUID,
 				Username: pr.Author.Username,
 				Name:     pr.Author.DisplayName,

@@ -6,11 +6,14 @@ require (
 	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/google/go-github/v57 v57.0.0
 	github.com/ilyakaznacheev/cleanenv v1.5.0
+	github.com/maxbolgarin/abstract v1.14.0
 	github.com/maxbolgarin/cliex v1.4.0
+	github.com/maxbolgarin/contem v1.5.0
 	github.com/maxbolgarin/errm v1.1.0
-	github.com/maxbolgarin/lang v1.8.0
+	github.com/maxbolgarin/lang v1.9.0
 	github.com/maxbolgarin/logze/v2 v2.3.0
 	github.com/maxbolgarin/servex/v2 v2.2.0
+	github.com/panjf2000/ants/v2 v2.11.3
 	gitlab.158-160-60-159.sslip.io/astra-monitoring-icl/go-lib v0.0.0-20250523142741-e4a551d67e5c
 	gitlab.com/gitlab-org/api/client-go v0.129.0
 	golang.org/x/oauth2 v0.30.0
@@ -40,10 +43,8 @@ require (
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/maxbolgarin/abstract v1.3.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/panjf2000/ants/v2 v2.11.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
 	github.com/rotisserie/eris v0.5.4 // indirect

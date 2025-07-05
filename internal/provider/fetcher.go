@@ -5,40 +5,40 @@ import (
 	"time"
 
 	"github.com/maxbolgarin/codry/internal/model"
+	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/logze/v2"
 )
 
-// MRFetcher provides utility methods for fetching merge requests from repositories
-type MRFetcher struct {
-	provider model.CodeProvider
-	logger   logze.Logger
+// Fetcher provides utility methods for fetching merge requests from repositories
+type Fetcher struct {
+	provider interfaces.CodeProvider
+	log      logze.Logger
 }
 
-// NewMRFetcher creates a new MR fetcher instance
-func NewMRFetcher(provider model.CodeProvider) *MRFetcher {
-	return &MRFetcher{
+// NewFetcher creates a new MR fetcher instance
+func NewFetcher(provider interfaces.CodeProvider) *Fetcher {
+	return &Fetcher{
 		provider: provider,
-		logger:   logze.With("component", "mr_fetcher"),
+		log:      logze.With("component", "fetcher"),
 	}
 }
 
 // FetchOpenMRs retrieves all open merge requests from a repository
-func (f *MRFetcher) FetchOpenMRs(ctx context.Context, projectID string) ([]*model.MergeRequest, error) {
+func (f *Fetcher) FetchOpenMRs(ctx context.Context, projectID string) ([]*model.MergeRequest, error) {
 	filter := &model.MergeRequestFilter{
 		State: []string{"open", "opened"}, // Support both GitLab and GitHub terminology
 		Limit: 100,                        // Get up to 100 MRs per page
 	}
-
-	f.logger.Info("fetching open merge requests", "project_id", projectID)
+	f.log.Info("fetching open merge requests", "project_id", projectID)
 	return f.provider.ListMergeRequests(ctx, projectID, filter)
 }
 
 // FetchRecentMRs retrieves merge requests updated in the last specified duration
-func (f *MRFetcher) FetchRecentMRs(ctx context.Context, projectID string, since time.Duration) ([]*model.MergeRequest, error) {
+func (f *Fetcher) FetchRecentMRs(ctx context.Context, projectID string, since time.Duration) ([]*model.MergeRequest, error) {
 	sinceTime := time.Now().Add(-since)
 
-	f.logger.Info("fetching recent merge requests",
+	f.log.Info("fetching recent merge requests",
 		"project_id", projectID,
 		"since", sinceTime.Format(time.RFC3339))
 
@@ -46,14 +46,14 @@ func (f *MRFetcher) FetchRecentMRs(ctx context.Context, projectID string, since 
 }
 
 // FetchMRsByAuthor retrieves merge requests created by a specific author
-func (f *MRFetcher) FetchMRsByAuthor(ctx context.Context, projectID, authorID string) ([]*model.MergeRequest, error) {
+func (f *Fetcher) FetchMRsByAuthor(ctx context.Context, projectID, authorID string) ([]*model.MergeRequest, error) {
 	filter := &model.MergeRequestFilter{
 		State:    []string{"open", "opened"},
 		AuthorID: authorID,
 		Limit:    50,
 	}
 
-	f.logger.Info("fetching merge requests by author",
+	f.log.Info("fetching merge requests by author",
 		"project_id", projectID,
 		"author_id", authorID)
 
@@ -61,7 +61,7 @@ func (f *MRFetcher) FetchMRsByAuthor(ctx context.Context, projectID, authorID st
 }
 
 // FetchMRsToReview retrieves merge requests that need review based on various criteria
-func (f *MRFetcher) FetchMRsToReview(ctx context.Context, projectID string, options FetchOptions) ([]*model.MergeRequest, error) {
+func (f *Fetcher) FetchMRsToReview(ctx context.Context, projectID string, options FetchOptions) ([]*model.MergeRequest, error) {
 	filter := &model.MergeRequestFilter{
 		State:        []string{"open", "opened"},
 		TargetBranch: options.TargetBranch,
@@ -76,7 +76,7 @@ func (f *MRFetcher) FetchMRsToReview(ctx context.Context, projectID string, opti
 		filter.CreatedAfter = options.CreatedSince
 	}
 
-	f.logger.Info("fetching merge requests for review",
+	f.log.Info("fetching merge requests for review",
 		"project_id", projectID,
 		"target_branch", options.TargetBranch,
 		"limit", options.Limit)
@@ -85,8 +85,8 @@ func (f *MRFetcher) FetchMRsToReview(ctx context.Context, projectID string, opti
 }
 
 // PollForUpdates continuously polls for updated merge requests
-func (f *MRFetcher) PollForUpdates(ctx context.Context, projectID string, interval time.Duration, callback func([]*model.MergeRequest)) error {
-	f.logger.Info("starting MR polling",
+func (f *Fetcher) PollForUpdates(ctx context.Context, projectID string, interval time.Duration, callback func([]*model.MergeRequest)) error {
+	f.log.Info("starting MR polling",
 		"project_id", projectID,
 		"interval", interval)
 
@@ -98,18 +98,18 @@ func (f *MRFetcher) PollForUpdates(ctx context.Context, projectID string, interv
 	for {
 		select {
 		case <-ctx.Done():
-			f.logger.Info("stopping MR polling due to context cancellation")
+			f.log.Info("stopping MR polling due to context cancellation")
 			return ctx.Err()
 
 		case <-ticker.C:
 			mrs, err := f.provider.GetMergeRequestUpdates(ctx, projectID, lastUpdate)
 			if err != nil {
-				f.logger.Error("failed to fetch MR updates", "error", err)
+				f.log.Error("failed to fetch MR updates", "error", err)
 				continue
 			}
 
 			if len(mrs) > 0 {
-				f.logger.Info("found updated merge requests", "count", len(mrs))
+				f.log.Info("found updated merge requests", "count", len(mrs))
 				callback(mrs)
 
 				// Update the last update time to the most recent MR update
@@ -124,8 +124,8 @@ func (f *MRFetcher) PollForUpdates(ctx context.Context, projectID string, interv
 }
 
 // BatchProcessMRs processes multiple merge requests with a callback function
-func (f *MRFetcher) BatchProcessMRs(ctx context.Context, projectID string, filter *model.MergeRequestFilter, processor func(*model.MergeRequest) error) error {
-	f.logger.Info("starting batch MR processing", "project_id", projectID)
+func (f *Fetcher) BatchProcessMRs(ctx context.Context, projectID string, filter *model.MergeRequestFilter, processor func(*model.MergeRequest) error) error {
+	f.log.Info("starting batch MR processing", "project_id", projectID)
 
 	page := 0
 	for {
@@ -139,11 +139,11 @@ func (f *MRFetcher) BatchProcessMRs(ctx context.Context, projectID string, filte
 			break // No more results
 		}
 
-		f.logger.Debug("processing MR batch", "count", len(mrs), "page", page)
+		f.log.Debug("processing MR batch", "count", len(mrs), "page", page)
 
 		for _, mr := range mrs {
 			if err := processor(mr); err != nil {
-				f.logger.Error("failed to process merge request",
+				f.log.Error("failed to process merge request",
 					"mr_id", mr.ID,
 					"error", err)
 				// Continue processing other MRs instead of failing
@@ -158,7 +158,7 @@ func (f *MRFetcher) BatchProcessMRs(ctx context.Context, projectID string, filte
 		page++
 	}
 
-	f.logger.Info("completed batch MR processing", "project_id", projectID)
+	f.log.Info("completed batch MR processing", "project_id", projectID)
 	return nil
 }
 
@@ -175,43 +175,4 @@ func (o *FetchOptions) SetDefaults() {
 	if o.Limit == 0 {
 		o.Limit = 50
 	}
-}
-
-// MRProcessor defines a function type for processing individual merge requests
-type MRProcessor func(*model.MergeRequest) error
-
-// Example usage functions
-
-// CreateReviewProcessor returns a processor that creates review events for merge requests
-func CreateReviewProcessor(reviewService model.ReviewService) MRProcessor {
-	return func(mr *model.MergeRequest) error {
-		// Create a review request for the merge request
-		request := &model.ReviewRequest{
-			ProjectID:    mr.AuthorID, // This would need proper project ID mapping
-			MergeRequest: mr,
-			CommitSHA:    mr.SHA,
-		}
-
-		ctx := context.Background()
-		_, err := reviewService.ProcessMergeRequest(ctx, request)
-		return err
-	}
-}
-
-// FilterNeedsReview filters merge requests that need review based on criteria
-func FilterNeedsReview(mr *model.MergeRequest, botUsername string) bool {
-	// Skip if bot is already a reviewer
-	for _, reviewer := range mr.Reviewers {
-		if reviewer.Username == botUsername {
-			return false
-		}
-	}
-
-	// Only review open/opened MRs
-	if mr.State != "open" && mr.State != "opened" {
-		return false
-	}
-
-	// Add more criteria as needed
-	return true
 }

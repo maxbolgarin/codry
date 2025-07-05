@@ -4,6 +4,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/lang"
 )
@@ -44,6 +45,8 @@ type Config struct {
 	Timeout    time.Duration `yaml:"timeout" env:"AGENT_TIMEOUT"`
 	UserAgent  string        `yaml:"user_agent" env:"AGENT_USER_AGENT"`
 	IsTest     bool          `yaml:"is_test" env:"AGENT_IS_TEST"`
+
+	Language model.Language `yaml:"language" env:"AGENT_LANGUAGE"`
 }
 
 func (c *Config) PrepareAndValidate() error {

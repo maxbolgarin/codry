@@ -14,6 +14,16 @@ const (
 	defaultTimeout  = 30 * time.Second
 )
 
+// TODO: make configurable
+var authHeaders = []string{
+	"X-Gitlab-Token",      // GitLab
+	"X-Hub-Signature-256", // GitHub
+	"X-Hub-Signature",     // GitHub (legacy)
+	"X-Hook-UUID",         // Bitbucket webhook signature
+	"X-Request-UUID",      // Bitbucket alternative
+	"Authorization",       // Generic
+}
+
 // Config represents webhook server configuration
 type Config struct {
 	Address  string        `yaml:"address" env:"SERVER_ADDRESS"`

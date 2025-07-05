@@ -14,12 +14,13 @@ import (
 
 	"github.com/google/go-github/v57/github"
 	"github.com/maxbolgarin/codry/internal/model"
+	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/logze/v2"
 	"golang.org/x/oauth2"
 )
 
-var _ model.CodeProvider = (*Provider)(nil)
+var _ interfaces.CodeProvider = (*Provider)(nil)
 
 const (
 	defaultBaseURL = "https://github.com"
@@ -99,9 +100,9 @@ func (p *Provider) ParseWebhookEvent(payload []byte) (*model.CodeEvent, error) {
 	}
 
 	// Convert reviewers
-	var reviewers []*model.User
+	var reviewers []model.User
 	for _, reviewer := range githubPayload.PullRequest.RequestedReviewers {
-		reviewers = append(reviewers, &model.User{
+		reviewers = append(reviewers, model.User{
 			ID:       strconv.Itoa(reviewer.ID),
 			Username: reviewer.Login,
 			Name:     reviewer.Name,
@@ -116,7 +117,6 @@ func (p *Provider) ParseWebhookEvent(payload []byte) (*model.CodeEvent, error) {
 			ID:       strconv.Itoa(githubPayload.Sender.ID),
 			Username: githubPayload.Sender.Login,
 			Name:     githubPayload.Sender.Name,
-			Email:    githubPayload.Sender.Email,
 		},
 		MergeRequest: &model.MergeRequest{
 			ID:           strconv.Itoa(githubPayload.PullRequest.ID),
@@ -128,12 +128,10 @@ func (p *Provider) ParseWebhookEvent(payload []byte) (*model.CodeEvent, error) {
 			URL:          githubPayload.PullRequest.HTMLURL,
 			State:        githubPayload.PullRequest.State,
 			SHA:          githubPayload.PullRequest.Head.SHA,
-			AuthorID:     strconv.Itoa(githubPayload.PullRequest.User.ID),
-			Author: &model.User{
+			Author: model.User{
 				ID:       strconv.Itoa(githubPayload.PullRequest.User.ID),
 				Username: githubPayload.PullRequest.User.Login,
 				Name:     githubPayload.PullRequest.User.Name,
-				Email:    githubPayload.PullRequest.User.Email,
 			},
 			Reviewers: reviewers,
 		},
@@ -158,31 +156,30 @@ func (p *Provider) GetMergeRequest(ctx context.Context, projectID string, mrIID 
 	}
 
 	// Get requested reviewers
-	var reviewers []*model.User
+	var reviewers []model.User
 	if pr.RequestedReviewers != nil {
 		for _, reviewer := range pr.RequestedReviewers {
-			reviewers = append(reviewers, &model.User{
-				ID:       strconv.FormatInt(*reviewer.ID, 10),
-				Username: *reviewer.Login,
+			reviewers = append(reviewers, model.User{
+				ID:       strconv.FormatInt(reviewer.GetID(), 10),
+				Username: reviewer.GetLogin(),
 				Name:     reviewer.GetName(),
 			})
 		}
 	}
 
 	return &model.MergeRequest{
-		ID:           strconv.FormatInt(*pr.ID, 10),
-		IID:          *pr.Number,
-		Title:        *pr.Title,
+		ID:           strconv.FormatInt(pr.GetID(), 10),
+		IID:          pr.GetNumber(),
+		Title:        pr.GetTitle(),
 		Description:  pr.GetBody(),
-		SourceBranch: *pr.Head.Ref,
-		TargetBranch: *pr.Base.Ref,
-		URL:          *pr.HTMLURL,
-		State:        *pr.State,
-		SHA:          *pr.Head.SHA,
-		AuthorID:     strconv.FormatInt(*pr.User.ID, 10),
-		Author: &model.User{
-			ID:       strconv.FormatInt(*pr.User.ID, 10),
-			Username: *pr.User.Login,
+		SourceBranch: pr.GetHead().GetRef(),
+		TargetBranch: pr.GetBase().GetRef(),
+		URL:          pr.GetHTMLURL(),
+		State:        pr.GetState(),
+		SHA:          pr.GetHead().GetSHA(),
+		Author: model.User{
+			ID:       strconv.FormatInt(pr.User.GetID(), 10),
+			Username: pr.User.GetLogin(),
 			Name:     pr.User.GetName(),
 		},
 		Reviewers: reviewers,
@@ -265,7 +262,7 @@ func (p *Provider) UpdateMergeRequestDescription(ctx context.Context, projectID 
 }
 
 // CreateComment creates a comment on a pull request
-func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID int, comment *model.ReviewComment) error {
+func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID int, comment *model.Comment) error {
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
@@ -290,7 +287,7 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 }
 
 // GetComments retrieves all comments for a pull request
-func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.ReviewComment, error) {
+func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.Comment, error) {
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
@@ -319,16 +316,18 @@ func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int)
 	}
 
 	// Convert to our models
-	var reviewComments []*model.ReviewComment
+	var reviewComments []*model.Comment
 	for _, comment := range allComments {
-		reviewComment := &model.ReviewComment{
-			ID:   strconv.FormatInt(*comment.ID, 10),
-			Body: *comment.Body,
-			Author: &model.User{
-				ID:       strconv.FormatInt(*comment.User.ID, 10),
-				Username: *comment.User.Login,
+		reviewComment := &model.Comment{
+			ID:   strconv.FormatInt(comment.GetID(), 10),
+			Body: comment.GetBody(),
+			Author: model.User{
+				ID:       strconv.FormatInt(comment.User.GetID(), 10),
+				Username: comment.User.GetLogin(),
 				Name:     comment.User.GetName(),
 			},
+			CreatedAt: comment.GetCreatedAt().Time,
+			UpdatedAt: comment.GetUpdatedAt().Time,
 		}
 		reviewComments = append(reviewComments, reviewComment)
 	}
@@ -344,10 +343,9 @@ func (p *Provider) GetCurrentUser(ctx context.Context) (*model.User, error) {
 	}
 
 	return &model.User{
-		ID:       strconv.FormatInt(*user.ID, 10),
-		Username: *user.Login,
+		ID:       strconv.FormatInt(user.GetID(), 10),
+		Username: user.GetLogin(),
 		Name:     user.GetName(),
-		Email:    user.GetEmail(),
 	}, nil
 }
 
@@ -413,7 +411,7 @@ func (p *Provider) IsCommentEvent(event *model.CodeEvent) bool {
 // ReplyToComment replies to an existing comment
 func (p *Provider) ReplyToComment(ctx context.Context, projectID string, mrIID int, commentID string, reply string) error {
 	// GitHub doesn't have threaded comments, so we create a new comment with reference
-	comment := &model.ReviewComment{
+	comment := &model.Comment{
 		Body: fmt.Sprintf("Reply to comment %s: %s", commentID, reply),
 	}
 	return p.CreateComment(ctx, projectID, mrIID, comment)
@@ -439,12 +437,11 @@ func (p *Provider) GetComment(ctx context.Context, projectID string, mrIID int, 
 	}
 
 	return &model.Comment{
-		ID:       strconv.FormatInt(*comment.ID, 10),
-		Body:     *comment.Body,
-		AuthorID: strconv.FormatInt(*comment.User.ID, 10),
-		Author: &model.User{
-			ID:       strconv.FormatInt(*comment.User.ID, 10),
-			Username: *comment.User.Login,
+		ID:   strconv.FormatInt(comment.GetID(), 10),
+		Body: comment.GetBody(),
+		Author: model.User{
+			ID:       strconv.FormatInt(comment.User.GetID(), 10),
+			Username: comment.User.GetLogin(),
 			Name:     comment.User.GetName(),
 		},
 		CreatedAt: comment.GetCreatedAt().Time,
@@ -492,7 +489,7 @@ func (p *Provider) ListMergeRequests(ctx context.Context, projectID string, filt
 	for _, pr := range prs {
 		// Apply author filter if specified
 		if filter.AuthorID != "" {
-			authorID := strconv.FormatInt(*pr.User.ID, 10)
+			authorID := strconv.FormatInt(pr.User.GetID(), 10)
 			if authorID != filter.AuthorID {
 				continue
 			}
@@ -508,31 +505,30 @@ func (p *Provider) ListMergeRequests(ctx context.Context, projectID string, filt
 		}
 
 		// Get requested reviewers
-		var reviewers []*model.User
+		var reviewers []model.User
 		if pr.RequestedReviewers != nil {
 			for _, reviewer := range pr.RequestedReviewers {
-				reviewers = append(reviewers, &model.User{
-					ID:       strconv.FormatInt(*reviewer.ID, 10),
-					Username: *reviewer.Login,
+				reviewers = append(reviewers, model.User{
+					ID:       strconv.FormatInt(reviewer.GetID(), 10),
+					Username: reviewer.GetLogin(),
 					Name:     reviewer.GetName(),
 				})
 			}
 		}
 
 		modelMR := &model.MergeRequest{
-			ID:           strconv.FormatInt(*pr.ID, 10),
-			IID:          *pr.Number,
-			Title:        *pr.Title,
+			ID:           strconv.FormatInt(pr.GetID(), 10),
+			IID:          pr.GetNumber(),
+			Title:        pr.GetTitle(),
 			Description:  pr.GetBody(),
-			SourceBranch: *pr.Head.Ref,
-			TargetBranch: *pr.Base.Ref,
-			URL:          *pr.HTMLURL,
-			State:        *pr.State,
-			SHA:          *pr.Head.SHA,
-			AuthorID:     strconv.FormatInt(*pr.User.ID, 10),
-			Author: &model.User{
-				ID:       strconv.FormatInt(*pr.User.ID, 10),
-				Username: *pr.User.Login,
+			SourceBranch: pr.GetHead().GetRef(),
+			TargetBranch: pr.GetBase().GetRef(),
+			URL:          pr.GetHTMLURL(),
+			State:        pr.GetState(),
+			SHA:          pr.GetHead().GetSHA(),
+			Author: model.User{
+				ID:       strconv.FormatInt(pr.User.GetID(), 10),
+				Username: pr.User.GetLogin(),
 				Name:     pr.User.GetName(),
 			},
 			Reviewers: reviewers,

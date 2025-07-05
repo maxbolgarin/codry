@@ -4,7 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/maxbolgarin/codry/internal/model"
+	"github.com/maxbolgarin/codry/internal/model/interfaces"
+	"github.com/maxbolgarin/codry/internal/reviewer"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/logze/v2"
 	"github.com/maxbolgarin/servex/v2"
@@ -12,15 +13,15 @@ import (
 
 // Server handles webhook requests from VCS providers
 type Server struct {
-	provider      model.CodeProvider
-	reviewService model.ReviewService
-	config        Config
-	log           logze.Logger
-	server        *servex.Server
+	provider interfaces.CodeProvider
+	reviewer *reviewer.Reviewer
+	config   Config
+	log      logze.Logger
+	server   *servex.Server
 }
 
 // New creates a new webhook handler
-func New(cfg Config, provider model.CodeProvider, reviewService model.ReviewService) (*Server, error) {
+func New(cfg Config, provider interfaces.CodeProvider, reviewer *reviewer.Reviewer) (*Server, error) {
 	if err := cfg.PrepareAndValidate(); err != nil {
 		return nil, errm.Wrap(err, "validate config")
 	}
@@ -40,11 +41,11 @@ func New(cfg Config, provider model.CodeProvider, reviewService model.ReviewServ
 	}
 
 	h := &Server{
-		provider:      provider,
-		reviewService: reviewService,
-		config:        cfg,
-		log:           log,
-		server:        server,
+		provider: provider,
+		reviewer: reviewer,
+		config:   cfg,
+		log:      log,
+		server:   server,
 	}
 
 	server.HandleFunc(cfg.Endpoint, h.handleWebhook)
@@ -101,21 +102,10 @@ func (h *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("received merge request event", "mr_title", event.MergeRequest.Title, "action", event.Action)
 
 	// Pass event to review service - it will handle all the processing logic
-	if err := h.reviewService.HandleEvent(ctx, event); err != nil {
+	if err := h.reviewer.HandleEvent(ctx, event); err != nil {
 		ctx.InternalServerError(err, "failed to handle event")
 		return
 	}
-
-	ctx.Response(http.StatusOK)
-}
-
-var authHeaders = []string{
-	"X-Gitlab-Token",      // GitLab
-	"X-Hub-Signature-256", // GitHub
-	"X-Hub-Signature",     // GitHub (legacy)
-	"X-Hook-UUID",         // Bitbucket webhook signature
-	"X-Request-UUID",      // Bitbucket alternative
-	"Authorization",       // Generic
 }
 
 // getAuthFromHeaders extracts auth token from request headers

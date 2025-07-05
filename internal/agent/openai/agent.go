@@ -7,6 +7,7 @@ import (
 
 	"github.com/maxbolgarin/cliex"
 	"github.com/maxbolgarin/codry/internal/model"
+	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/lang"
 )
@@ -16,7 +17,7 @@ const (
 	defaultURL   = "https://api.openai.com/v1"
 )
 
-var _ model.AgentAPI = (*Agent)(nil)
+var _ interfaces.AgentAPI = (*Agent)(nil)
 
 // Agent implements the AIAgent interface using OpenAI API
 type Agent struct {

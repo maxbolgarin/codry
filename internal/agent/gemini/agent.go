@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/maxbolgarin/codry/internal/model"
+	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/lang"
 	"google.golang.org/genai"
@@ -16,7 +17,7 @@ const (
 	defaultModel = "gemini-2.5-flash"
 )
 
-var _ model.AgentAPI = (*Agent)(nil)
+var _ interfaces.AgentAPI = (*Agent)(nil)
 
 // Agent implements the AIAgent interface for Google Gemini
 type Agent struct {

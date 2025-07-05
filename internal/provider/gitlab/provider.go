@@ -10,12 +10,18 @@ import (
 	"time"
 
 	"github.com/maxbolgarin/codry/internal/model"
+	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/lang"
 	"github.com/maxbolgarin/logze/v2"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
 
-var _ model.CodeProvider = (*Provider)(nil)
+const (
+	defaultBaseURL = "https://gitlab.com"
+)
+
+var _ interfaces.CodeProvider = (*Provider)(nil)
 
 // Provider implements the CodeProvider interface for GitLab
 type Provider struct {
@@ -33,7 +39,7 @@ func NewProvider(config model.ProviderConfig) (*Provider, error) {
 
 	baseURL := config.BaseURL
 	if baseURL == "" {
-		baseURL = "https://gitlab.com"
+		baseURL = defaultBaseURL
 	}
 
 	client, err := gitlab.NewClient(config.Token, gitlab.WithBaseURL(baseURL))
@@ -76,7 +82,6 @@ func (p *Provider) ParseWebhookEvent(payload []byte) (*model.CodeEvent, error) {
 			ID:       strconv.Itoa(gitlabPayload.User.ID),
 			Username: gitlabPayload.User.Username,
 			Name:     gitlabPayload.User.Name,
-			Email:    gitlabPayload.User.Email,
 		},
 		MergeRequest: &model.MergeRequest{
 			ID:           strconv.Itoa(gitlabPayload.ObjectAttributes.IID),
@@ -88,7 +93,6 @@ func (p *Provider) ParseWebhookEvent(payload []byte) (*model.CodeEvent, error) {
 			URL:          gitlabPayload.ObjectAttributes.URL,
 			State:        gitlabPayload.ObjectAttributes.State,
 			SHA:          gitlabPayload.ObjectAttributes.LastCommit.ID,
-			AuthorID:     strconv.Itoa(gitlabPayload.ObjectAttributes.AuthorID),
 		},
 	}
 
@@ -112,9 +116,9 @@ func (p *Provider) GetMergeRequest(ctx context.Context, projectID string, mrIID 
 	}
 
 	// Convert reviewers
-	var reviewers []*model.User
+	var reviewers []model.User
 	for _, reviewer := range mr.Reviewers {
-		reviewers = append(reviewers, &model.User{
+		reviewers = append(reviewers, model.User{
 			ID:       strconv.Itoa(reviewer.ID),
 			Username: reviewer.Username,
 			Name:     reviewer.Name,
@@ -131,15 +135,14 @@ func (p *Provider) GetMergeRequest(ctx context.Context, projectID string, mrIID 
 		URL:          mr.WebURL,
 		State:        mr.State,
 		SHA:          mr.SHA,
-		AuthorID:     strconv.Itoa(mr.Author.ID),
-		Author: &model.User{
+		Author: model.User{
 			ID:       strconv.Itoa(mr.Author.ID),
 			Username: mr.Author.Username,
 			Name:     mr.Author.Name,
 		},
 		Reviewers: reviewers,
-		CreatedAt: *mr.CreatedAt,
-		UpdatedAt: *mr.UpdatedAt,
+		CreatedAt: lang.Deref(mr.CreatedAt),
+		UpdatedAt: lang.Deref(mr.UpdatedAt),
 	}, nil
 }
 
@@ -216,7 +219,7 @@ func (p *Provider) UpdateMergeRequestDescription(ctx context.Context, projectID 
 }
 
 // CreateComment creates a discussion/comment on a merge request
-func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID int, comment *model.ReviewComment) error {
+func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID int, comment *model.Comment) error {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
 		return errm.Wrap(err, "invalid project ID")
@@ -238,7 +241,7 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 }
 
 // GetComments retrieves all comments/discussions for a merge request
-func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.ReviewComment, error) {
+func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.Comment, error) {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
 		return nil, errm.Wrap(err, "invalid project ID")
@@ -249,13 +252,13 @@ func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int)
 		return nil, errm.Wrap(err, "failed to list merge request discussions")
 	}
 
-	var comments []*model.ReviewComment
+	var comments []*model.Comment
 	for _, discussion := range discussions {
 		for _, note := range discussion.Notes {
-			comment := &model.ReviewComment{
+			comment := &model.Comment{
 				ID:   strconv.Itoa(note.ID),
 				Body: note.Body,
-				Author: &model.User{
+				Author: model.User{
 					ID:       strconv.Itoa(note.Author.ID),
 					Username: note.Author.Username,
 					Name:     note.Author.Name,
@@ -279,7 +282,6 @@ func (p *Provider) GetCurrentUser(ctx context.Context) (*model.User, error) {
 		ID:       strconv.Itoa(user.ID),
 		Username: user.Username,
 		Name:     user.Name,
-		Email:    user.Email,
 	}, nil
 }
 
@@ -292,7 +294,7 @@ func (p *Provider) IsCommentEvent(event *model.CodeEvent) bool {
 func (p *Provider) ReplyToComment(ctx context.Context, projectID string, mrIID int, commentID string, reply string) error {
 	// For now, create a new discussion as a reply
 	// TODO: Implement proper thread replies when GitLab client supports it
-	comment := &model.ReviewComment{
+	comment := &model.Comment{
 		Body: fmt.Sprintf("Reply to comment %s: %s", commentID, reply),
 	}
 	return p.CreateComment(ctx, projectID, mrIID, comment)
@@ -316,16 +318,15 @@ func (p *Provider) GetComment(ctx context.Context, projectID string, mrIID int, 
 			if len(discussion.Notes) > 0 {
 				note := discussion.Notes[0]
 				return &model.Comment{
-					ID:       strconv.Itoa(note.ID),
-					Body:     note.Body,
-					AuthorID: strconv.Itoa(note.Author.ID),
-					Author: &model.User{
+					ID:   strconv.Itoa(note.ID),
+					Body: note.Body,
+					Author: model.User{
 						ID:       strconv.Itoa(note.Author.ID),
 						Username: note.Author.Username,
 						Name:     note.Author.Name,
 					},
-					CreatedAt: *note.CreatedAt,
-					UpdatedAt: *note.UpdatedAt,
+					CreatedAt: lang.Deref(note.CreatedAt),
+					UpdatedAt: lang.Deref(note.UpdatedAt),
 				}, nil
 			}
 		}
@@ -333,16 +334,15 @@ func (p *Provider) GetComment(ctx context.Context, projectID string, mrIID int, 
 		for _, note := range discussion.Notes {
 			if strconv.Itoa(note.ID) == commentID {
 				return &model.Comment{
-					ID:       strconv.Itoa(note.ID),
-					Body:     note.Body,
-					AuthorID: strconv.Itoa(note.Author.ID),
-					Author: &model.User{
+					ID:   strconv.Itoa(note.ID),
+					Body: note.Body,
+					Author: model.User{
 						ID:       strconv.Itoa(note.Author.ID),
 						Username: note.Author.Username,
 						Name:     note.Author.Name,
 					},
-					CreatedAt: *note.CreatedAt,
-					UpdatedAt: *note.UpdatedAt,
+					CreatedAt: lang.Deref(note.CreatedAt),
+					UpdatedAt: lang.Deref(note.UpdatedAt),
 				}, nil
 			}
 		}
@@ -402,9 +402,9 @@ func (p *Provider) ListMergeRequests(ctx context.Context, projectID string, filt
 	var result []*model.MergeRequest
 	for _, mr := range mrs {
 		// Convert reviewers
-		var reviewers []*model.User
+		var reviewers []model.User
 		for _, reviewer := range mr.Reviewers {
-			reviewers = append(reviewers, &model.User{
+			reviewers = append(reviewers, model.User{
 				ID:       strconv.Itoa(reviewer.ID),
 				Username: reviewer.Username,
 				Name:     reviewer.Name,
@@ -421,15 +421,14 @@ func (p *Provider) ListMergeRequests(ctx context.Context, projectID string, filt
 			URL:          mr.WebURL,
 			State:        mr.State,
 			SHA:          mr.SHA,
-			AuthorID:     strconv.Itoa(mr.Author.ID),
-			Author: &model.User{
+			Author: model.User{
 				ID:       strconv.Itoa(mr.Author.ID),
 				Username: mr.Author.Username,
 				Name:     mr.Author.Name,
 			},
 			Reviewers: reviewers,
-			CreatedAt: *mr.CreatedAt,
-			UpdatedAt: *mr.UpdatedAt,
+			CreatedAt: lang.Deref(mr.CreatedAt),
+			UpdatedAt: lang.Deref(mr.UpdatedAt),
 		}
 		result = append(result, modelMR)
 	}

@@ -280,3 +280,26 @@ Code changes to summarize:
 
 Provide a comprehensive summary of these changes:
 `
+
+// TODO: make it better
+
+var commentReplySystemPromptTemplate = `
+You are a helpful assistant that generates replies to comments on code changes.
+
+Your task is to analyze the comment and the context of the code changes and generate a reply that is helpful and informative.
+
+LANGUAGE INSTRUCTIONS:
+%s
+
+`
+
+var commentReplyUserPromptTemplate = `
+Comment: %s
+
+Code changes to review:
+---
+%s
+---
+
+Generate a reply to the comment:
+`

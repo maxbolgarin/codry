@@ -4,7 +4,7 @@ LDFLAGS += -X 'main.BuildDate=$(shell LANG=en_us_88591; date)'
 LDFLAGS += -X 'main.Version=$(shell git describe --tags --always)'
 
 run:
-	go run -ldflags="${LDFLAGS}" cmd/main/main.go -c compose/config.yml
+	go run -ldflags="${LDFLAGS}" cmd/main/main.go -c deploy/config.yml
 
 start: run
 
