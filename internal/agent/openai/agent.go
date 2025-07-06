@@ -83,11 +83,10 @@ func (a *Agent) CallAPI(ctx context.Context, req model.APIRequest) (model.APIRes
 	}
 
 	// Extract response
-	if len(respBody.Choices) == 0 {
-		return model.APIResponse{}, errm.New("no choices in response")
+	var content string
+	if len(respBody.Choices) > 0 {
+		content = strings.TrimSpace(respBody.Choices[0].Message.Content)
 	}
-
-	content := strings.TrimSpace(respBody.Choices[0].Message.Content)
 
 	out := model.APIResponse{
 		CreateTime:       time.Unix(respBody.Created, 0),

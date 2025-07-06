@@ -25,6 +25,12 @@ type Reviewer struct {
 	cfg Config
 	log logze.Logger
 
+	// Enhanced context gathering
+	contextGatherer *ContextGatherer
+
+	// Quality scoring for prioritizing issues
+	qualityScorer *QualityScorer
+
 	// Track processed MRs and reviewed files
 	processedMRs *abstract.SafeMapOfMaps[string, string, string]
 }
@@ -41,13 +47,15 @@ func New(cfg Config, provider interfaces.CodeProvider, agent *agent.Agent) (*Rev
 	}
 
 	s := &Reviewer{
-		provider:     provider,
-		agent:        agent,
-		cfg:          cfg,
-		log:          logze.With("component", "reviewer"),
-		pool:         pool,
-		parser:       newDiffParser(),
-		processedMRs: abstract.NewSafeMapOfMaps[string, string, string](),
+		provider:        provider,
+		agent:           agent,
+		cfg:             cfg,
+		log:             logze.With("component", "reviewer"),
+		pool:            pool,
+		parser:          newDiffParser(),
+		contextGatherer: NewContextGatherer(provider),
+		qualityScorer:   NewQualityScorer(DefaultQualityScoringConfig()),
+		processedMRs:    abstract.NewSafeMapOfMaps[string, string, string](),
 	}
 
 	return s, nil

@@ -78,18 +78,17 @@ func (a *Agent) CallAPI(ctx context.Context, req model.APIRequest) (model.APIRes
 	}
 
 	// Extract response
-	if len(respBody.Content) == 0 {
-		return model.APIResponse{}, errm.New("no content in response")
-	}
-
-	var responseText strings.Builder
-	for _, c := range respBody.Content {
-		if c.Type == "text" {
-			responseText.WriteString(c.Text)
+	var content string
+	if len(respBody.Content) > 0 {
+		var responseText strings.Builder
+		for _, c := range respBody.Content {
+			if c.Type == "text" {
+				responseText.WriteString(c.Text)
+			}
 		}
+		content = strings.TrimSpace(responseText.String())
 	}
 
-	content := strings.TrimSpace(responseText.String())
 	out := model.APIResponse{
 		CreateTime:       time.Now(),
 		Content:          content,

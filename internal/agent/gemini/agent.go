@@ -69,7 +69,7 @@ func New(ctx context.Context, cfg model.ModelConfig) (*Agent, error) {
 // generate calls the Gemini API to generate content
 func (a *Agent) CallAPI(ctx context.Context, req model.APIRequest) (model.APIResponse, error) {
 	config := &genai.GenerateContentConfig{
-		ResponseMIMEType:  "text/plain",
+		ResponseMIMEType:  lang.Check(req.ResponseType, "text/plain"),
 		Temperature:       &req.Temperature,
 		MaxOutputTokens:   int32(req.MaxTokens),
 		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: req.SystemPrompt}}},
@@ -84,18 +84,17 @@ func (a *Agent) CallAPI(ctx context.Context, req model.APIRequest) (model.APIRes
 		return model.APIResponse{}, a.handleAPIError(err)
 	}
 
-	if len(result.Candidates) == 0 {
-		return model.APIResponse{}, errm.New("no candidates returned from Gemini API")
-	}
-
-	candidate := result.Candidates[0]
-	if candidate.Content == nil || len(candidate.Content.Parts) == 0 {
-		return model.APIResponse{}, errm.New("invalid response structure from Gemini API")
+	var content string
+	if len(result.Candidates) > 0 {
+		candidate := result.Candidates[0]
+		if candidate.Content != nil && len(candidate.Content.Parts) > 0 {
+			content = candidate.Content.Parts[0].Text
+		}
 	}
 
 	out := model.APIResponse{
 		CreateTime:       result.CreateTime,
-		Content:          candidate.Content.Parts[0].Text,
+		Content:          content,
 		PromptTokens:     int(result.UsageMetadata.PromptTokenCount),
 		CompletionTokens: int(result.UsageMetadata.CandidatesTokenCount),
 		TotalTokens:      int(result.UsageMetadata.TotalTokenCount),

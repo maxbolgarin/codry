@@ -28,6 +28,38 @@ type diffLine struct {
 	Position int
 }
 
+// SemanticChange represents a high-level change with business impact
+type SemanticChange struct {
+	Type        SemanticChangeType
+	Impact      ChangeImpact
+	Description string
+	Lines       []int
+	Context     string
+}
+
+// SemanticChangeType categorizes the type of semantic change
+type SemanticChangeType string
+
+const (
+	SemanticChangeAPIContract         SemanticChangeType = "api_contract"
+	SemanticChangeBusinessLogic       SemanticChangeType = "business_logic"
+	SemanticChangeErrorHandling       SemanticChangeType = "error_handling"
+	SemanticChangeSecurityLogic       SemanticChangeType = "security_logic"
+	SemanticChangePerformanceCritical SemanticChangeType = "performance_critical"
+	SemanticChangeDataFlow            SemanticChangeType = "data_flow"
+	SemanticChangeConfiguration       SemanticChangeType = "configuration"
+	SemanticChangeValidation          SemanticChangeType = "validation"
+)
+
+// ChangeImpact represents the potential impact of a change
+type ChangeImpact string
+
+const (
+	ChangeImpactHigh   ChangeImpact = "high"
+	ChangeImpactMedium ChangeImpact = "medium"
+	ChangeImpactLow    ChangeImpact = "low"
+)
+
 // diffParser parses unified diff format
 type diffParser struct {
 	hunkHeaderRegex *regexp.Regexp
@@ -151,21 +183,6 @@ func (dp *diffParser) enhanceReviewComments(diff string, comments []*model.Revie
 			}
 			if comment.EndLine > maxLine {
 				comment.EndLine = maxLine
-			}
-		}
-
-		// Add code snippet if not present
-		if comment.CodeSnippet == "" {
-			if comment.IsRangeComment() {
-				snippet, err := dp.extractRangeSnippet(diff, comment.Line, comment.EndLine)
-				if err == nil {
-					comment.CodeSnippet = snippet
-				}
-			} else {
-				snippet, err := dp.extractCodeSnippet(diff, comment.Line)
-				if err == nil {
-					comment.CodeSnippet = snippet
-				}
 			}
 		}
 	}
@@ -394,4 +411,226 @@ func (dp *diffParser) extractContentFromAddedLines(diffLines []*diffLine) (strin
 		}
 	}
 	return strings.Join(result, "\n"), nil
+}
+
+// AnalyzeSemanticChanges analyzes the semantic meaning of code changes
+func (dp *diffParser) AnalyzeSemanticChanges(diff, fileContent string) ([]SemanticChange, error) {
+	lines, err := dp.parseDiffToLines(diff)
+	if err != nil {
+		return nil, err
+	}
+
+	var changes []SemanticChange
+
+	// Group related changes together
+	changeGroups := dp.groupRelatedChanges(lines)
+
+	for _, group := range changeGroups {
+		semanticChange := dp.analyzeChangeGroup(group, fileContent)
+		if semanticChange != nil {
+			changes = append(changes, *semanticChange)
+		}
+	}
+
+	return changes, nil
+}
+
+// groupRelatedChanges groups diff lines that are logically related
+func (dp *diffParser) groupRelatedChanges(lines []*diffLine) [][]*diffLine {
+	var groups [][]*diffLine
+	var currentGroup []*diffLine
+
+	for i, line := range lines {
+		if line.Type == diffHeaderLine {
+			if len(currentGroup) > 0 {
+				groups = append(groups, currentGroup)
+				currentGroup = nil
+			}
+			continue
+		}
+
+		// Start new group if there's a significant gap
+		if len(currentGroup) > 0 {
+			lastLine := currentGroup[len(currentGroup)-1]
+			if line.NewLine > 0 && lastLine.NewLine > 0 && line.NewLine-lastLine.NewLine > 5 {
+				groups = append(groups, currentGroup)
+				currentGroup = nil
+			}
+		}
+
+		currentGroup = append(currentGroup, line)
+
+		// End group at the last line
+		if i == len(lines)-1 && len(currentGroup) > 0 {
+			groups = append(groups, currentGroup)
+		}
+	}
+
+	return groups
+}
+
+// analyzeChangeGroup analyzes a group of related changes to determine semantic meaning
+func (dp *diffParser) analyzeChangeGroup(group []*diffLine, fileContent string) *SemanticChange {
+	if len(group) == 0 {
+		return nil
+	}
+
+	// Combine all change content
+	var addedContent, removedContent strings.Builder
+	var lineNumbers []int
+
+	for _, line := range group {
+		switch line.Type {
+		case diffAddedLine:
+			addedContent.WriteString(line.Content + "\n")
+			if line.NewLine > 0 {
+				lineNumbers = append(lineNumbers, line.NewLine)
+			}
+		case diffRemovedLine:
+			removedContent.WriteString(line.Content + "\n")
+			if line.OldLine > 0 {
+				lineNumbers = append(lineNumbers, line.OldLine)
+			}
+		}
+	}
+
+	added := addedContent.String()
+	removed := removedContent.String()
+
+	// Analyze the semantic meaning
+	changeType, impact := dp.classifySemanticChange(added, removed, fileContent)
+	if changeType == "" {
+		return nil
+	}
+
+	return &SemanticChange{
+		Type:        changeType,
+		Impact:      impact,
+		Description: dp.generateChangeDescription(changeType, added, removed),
+		Lines:       lineNumbers,
+		Context:     dp.extractSurroundingContext(group, fileContent),
+	}
+}
+
+// classifySemanticChange determines the type and impact of a change
+func (dp *diffParser) classifySemanticChange(added, removed, fileContent string) (SemanticChangeType, ChangeImpact) {
+	combinedChange := added + " " + removed
+	lowerChange := strings.ToLower(combinedChange)
+
+	// API Contract changes
+	if dp.containsPatterns(lowerChange, []string{"func ", "method", "interface", "struct", "type"}) &&
+		dp.containsPatterns(added, []string{"func "}) {
+		return SemanticChangeAPIContract, ChangeImpactHigh
+	}
+
+	// Security-related changes
+	if dp.containsPatterns(lowerChange, []string{"auth", "password", "token", "session", "validate", "sanitize", "permission"}) {
+		return SemanticChangeSecurityLogic, ChangeImpactHigh
+	}
+
+	// Error handling changes
+	if dp.containsPatterns(lowerChange, []string{"error", "err", "panic", "recover", "try", "catch", "throw"}) {
+		if dp.containsPatterns(added, []string{"error", "err"}) {
+			return SemanticChangeErrorHandling, ChangeImpactMedium
+		}
+		return SemanticChangeErrorHandling, ChangeImpactHigh
+	}
+
+	// Performance-critical changes
+	if dp.containsPatterns(lowerChange, []string{"query", "database", "db", "cache", "loop", "for ", "while", "goroutine", "async"}) {
+		return SemanticChangePerformanceCritical, ChangeImpactMedium
+	}
+
+	// Configuration changes
+	if dp.containsPatterns(lowerChange, []string{"config", "setting", "env", "flag", "const", "var"}) {
+		return SemanticChangeConfiguration, ChangeImpactMedium
+	}
+
+	// Validation changes
+	if dp.containsPatterns(lowerChange, []string{"validate", "check", "verify", "assert", "ensure"}) {
+		return SemanticChangeValidation, ChangeImpactMedium
+	}
+
+	// Business logic changes (fallback for substantial changes)
+	if len(added) > 100 || len(removed) > 100 {
+		return SemanticChangeBusinessLogic, ChangeImpactMedium
+	}
+
+	return "", ChangeImpactLow
+}
+
+// generateChangeDescription creates a human-readable description of the change
+func (dp *diffParser) generateChangeDescription(changeType SemanticChangeType, added, removed string) string {
+	switch changeType {
+	case SemanticChangeAPIContract:
+		if strings.Contains(added, "func ") {
+			return "API contract modified - new function or method signature"
+		}
+		return "API contract modified - interface or type definition changed"
+	case SemanticChangeSecurityLogic:
+		return "Security-related logic modified - authentication, authorization, or validation changes"
+	case SemanticChangeErrorHandling:
+		if len(added) > len(removed) {
+			return "Error handling enhanced - additional error checking or recovery"
+		}
+		return "Error handling modified - changes to error processing logic"
+	case SemanticChangePerformanceCritical:
+		return "Performance-critical code modified - database queries, loops, or async operations"
+	case SemanticChangeConfiguration:
+		return "Configuration changes - settings, constants, or environment variables"
+	case SemanticChangeValidation:
+		return "Validation logic modified - input checking or data verification"
+	case SemanticChangeBusinessLogic:
+		return "Business logic modified - core application functionality changed"
+	case SemanticChangeDataFlow:
+		return "Data flow modified - how data moves through the system"
+	default:
+		return "Code logic modified"
+	}
+}
+
+// extractSurroundingContext extracts context around the changes
+func (dp *diffParser) extractSurroundingContext(group []*diffLine, fileContent string) string {
+	if len(group) == 0 {
+		return ""
+	}
+
+	// Find the function or struct this change belongs to
+	firstLine := group[0]
+	lines := strings.Split(fileContent, "\n")
+
+	// Look backwards for function/method/struct definition
+	startLine := firstLine.NewLine
+	if startLine <= 0 {
+		startLine = firstLine.OldLine
+	}
+	if startLine <= 0 || startLine > len(lines) {
+		return ""
+	}
+
+	for i := startLine - 1; i >= 0 && i < len(lines); i-- {
+		line := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(line, "func ") ||
+			strings.HasPrefix(line, "type ") ||
+			strings.Contains(line, "struct {") ||
+			strings.Contains(line, "interface {") {
+			return line
+		}
+		// Don't go too far back
+		if startLine-i > 20 {
+			break
+		}
+	}
+
+	return ""
+}
+
+// Helper function to check if text contains any of the patterns
+func (dp *diffParser) containsPatterns(text string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if strings.Contains(text, pattern) {
+			return true
+		}
+	}
+	return false
 }

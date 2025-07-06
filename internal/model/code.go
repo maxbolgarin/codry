@@ -81,7 +81,7 @@ type ReviewAIComment struct {
 	Position     int              `json:"position,omitempty"`
 	IssueType    IssueType        `json:"issue_type"`
 	Confidence   ReviewConfidence `json:"confidence"`
-	Severity     ReviewSeverity   `json:"severity"`
+	Priority     ReviewPriority   `json:"priority"`
 	CodeLanguage string           `json:"code_language"`
 	Title        string           `json:"title"`
 	Description  string           `json:"description"`
@@ -116,14 +116,14 @@ const (
 	ConfidenceLow      ReviewConfidence = "low"
 )
 
-// ReviewSeverity defines the severity level of review issues by AI
-type ReviewSeverity string
+// ReviewPriority defines the priority level of review issues by AI
+type ReviewPriority string
 
 const (
-	ReviewSeverityVeryHigh ReviewSeverity = "very_high"
-	ReviewSeverityHigh     ReviewSeverity = "high"
-	ReviewSeverityMedium   ReviewSeverity = "medium"
-	ReviewSeverityLow      ReviewSeverity = "low"
+	ReviewPriorityCritical ReviewPriority = "critical"
+	ReviewPriorityHigh     ReviewPriority = "high"
+	ReviewPriorityMedium   ReviewPriority = "medium"
+	ReviewPriorityBacklog  ReviewPriority = "backlog"
 )
 
 // FileReviewResult represents the result of a file review

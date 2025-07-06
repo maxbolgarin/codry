@@ -1,6 +1,9 @@
 package prompts
 
-import "github.com/maxbolgarin/codry/internal/model"
+import (
+	"github.com/maxbolgarin/codry/internal/model"
+	"github.com/maxbolgarin/logze/v2"
+)
 
 // LanguageConfig defines the target language for AI responses
 type LanguageConfig struct {
@@ -48,7 +51,7 @@ type CodeReviewHeaders struct {
 	OtherIssueHeader             string `yaml:"other_issue_header"`
 
 	ConfidenceHeader string `yaml:"confidence_header"`
-	SeverityHeader   string `yaml:"severity_header"`
+	PriorityHeader   string `yaml:"priority_header"`
 	SuggestionHeader string `yaml:"suggestion_header"`
 
 	ConfidenceLow      string `yaml:"confidence_low"`
@@ -56,10 +59,10 @@ type CodeReviewHeaders struct {
 	ConfidenceHigh     string `yaml:"confidence_high"`
 	ConfidenceVeryHigh string `yaml:"confidence_very_high"`
 
-	SeverityLow      string `yaml:"severity_low"`
-	SeverityMedium   string `yaml:"severity_medium"`
-	SeverityHigh     string `yaml:"severity_high"`
-	SeverityVeryHigh string `yaml:"severity_very_high"`
+	PriorityLow      string `yaml:"priority_low"`
+	PriorityMedium   string `yaml:"priority_medium"`
+	PriorityHigh     string `yaml:"priority_high"`
+	PriorityCritical string `yaml:"priority_critical"`
 }
 
 // DefaultLanguages provides common language configurations
@@ -100,12 +103,12 @@ var DefaultLanguages = map[model.Language]LanguageConfig{
 
 			SuggestionHeader: "💡 Suggestion",
 			ConfidenceHeader: "Model confidence",
-			SeverityHeader:   "Issue severity",
+			PriorityHeader:   "Issue priority",
 
-			SeverityLow:      "may be added to the backlog 💭",
-			SeverityMedium:   "can be fixed later, but fix will make everything better ♻️",
-			SeverityHigh:     "should be fixed soon ⚠️",
-			SeverityVeryHigh: "must be fixed immediately ❗️",
+			PriorityLow:      "backlog ⚪️",
+			PriorityMedium:   "could be fixed later 🟢",
+			PriorityHigh:     "should be fixed soon 🟡",
+			PriorityCritical: "must be fixed immediately 🔴",
 
 			ConfidenceLow:      "low (20-40%)",
 			ConfidenceMedium:   "medium (40-70%)",
@@ -166,7 +169,8 @@ func (dh CodeReviewHeaders) GetByType(t model.IssueType) string {
 	case model.IssueTypeOther:
 		return dh.OtherIssueHeader
 	}
-	return ""
+	logze.Warn("unknown issue type", "issue_type", t)
+	return dh.OtherIssueHeader
 }
 
 func (dh CodeReviewHeaders) GetConfidence(c model.ReviewConfidence) string {
@@ -180,19 +184,21 @@ func (dh CodeReviewHeaders) GetConfidence(c model.ReviewConfidence) string {
 	case model.ConfidenceLow:
 		return dh.ConfidenceLow
 	}
-	return ""
+	logze.Warn("unknown confidence", "confidence", c)
+	return dh.ConfidenceMedium
 }
 
-func (dh CodeReviewHeaders) GetSeverity(s model.ReviewSeverity) string {
+func (dh CodeReviewHeaders) GetPriority(s model.ReviewPriority) string {
 	switch s {
-	case model.ReviewSeverityVeryHigh:
-		return dh.SeverityVeryHigh
-	case model.ReviewSeverityHigh:
-		return dh.SeverityHigh
-	case model.ReviewSeverityMedium:
-		return dh.SeverityMedium
-	case model.ReviewSeverityLow:
-		return dh.SeverityLow
+	case model.ReviewPriorityCritical:
+		return dh.PriorityCritical
+	case model.ReviewPriorityHigh:
+		return dh.PriorityHigh
+	case model.ReviewPriorityMedium:
+		return dh.PriorityMedium
+	case model.ReviewPriorityBacklog:
+		return dh.PriorityLow
 	}
-	return ""
+	logze.Warn("unknown priority", "priority", s)
+	return dh.PriorityMedium
 }

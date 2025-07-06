@@ -20,6 +20,7 @@ type APIRequest struct {
 	MaxTokens    int
 	Temperature  float32
 	URL          string
+	ResponseType string
 }
 
 // APIResponse represents a response from an LLM API

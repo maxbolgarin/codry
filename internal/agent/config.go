@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	defaultTemperature = 0.7
-	defaultMaxTokens   = 1000
-	defaultTimeout     = 10 * time.Second
-	defaultMaxRetries  = 3
-	defaultRetryDelay  = 1 * time.Second
+	defaultTemperature = 0.5
+	defaultMaxTokens   = 100000
+	defaultTimeout     = 30 * time.Second
+	defaultMaxRetries  = 5
+	defaultRetryDelay  = 5 * time.Second
 	defaultUserAgent   = "codry/0.1.0 (github.com/maxbolgarin/codry)"
 )
 

@@ -20,11 +20,13 @@ func (s *Reviewer) reviewCodeChanges(ctx context.Context, request model.ReviewRe
 		return 0, nil
 	}
 
-	log.Info("reviewing code changes")
+	log.Info("reviewing code changes with context analysis")
 	commentsCreated := 0
 
 	errs := errm.NewList()
 	for _, change := range changes {
+		change.OldPath = lang.Check(change.OldPath, change.NewPath)
+
 		fileHash := s.getFileHash(change.Diff)
 		if oldHash, ok := s.processedMRs.Lookup(request.String(), change.NewPath); ok {
 			if oldHash == fileHash {
@@ -33,70 +35,135 @@ func (s *Reviewer) reviewCodeChanges(ctx context.Context, request model.ReviewRe
 			}
 		}
 
-		log.Debug("reviewing code change", "file", change.NewPath)
+		log.Debug("performing review", "file", change.NewPath)
 
-		// Get full file content (after changes applied) and clean diff
-		fullFileContent, cleanDiff, err := s.prepareFileContentAndDiff(ctx, request, change, log)
+		// reviewResult, err := s.performBasicReview(ctx, request, change, log)
+		// if err != nil {
+		// 	errs.Wrap(err, "failed to perform basic review", "file", change.NewPath)
+		// 	continue
+		// }
+		// commentsCreated += s.processReviewResults(ctx, request, change, reviewResult, log)
+		// continue
+
+		// Gather enhanced context for the file
+		enhancedCtx, err := s.contextGatherer.GatherEnhancedContext(ctx, request, change)
 		if err != nil {
-			errs.Wrap(err, "failed to prepare file content and diff", "file", change.NewPath)
-			log.Error("failed to prepare file content and diff", "error", err, "file", change.NewPath)
+			log.Warn("failed to gather enhanced context, falling back to basic review", "error", err, "file", change.NewPath)
+			// Fallback to basic review
+			reviewResult, err := s.performBasicReview(ctx, request, change, log)
+			if err != nil {
+				errs.Wrap(err, "failed to perform basic review", "file", change.NewPath)
+				continue
+			}
+			commentsCreated += s.processReviewResults(ctx, request, change, reviewResult, log)
 			continue
 		}
 
-		// Use enhanced structured review with full file content and clean diff
-		reviewResult, err := s.agent.ReviewCode(ctx, change.NewPath, fullFileContent, cleanDiff)
+		// Generate clean diff
+		cleanDiff, err := s.parser.GenerateCleanDiff(change.Diff)
 		if err != nil {
-			errs.Wrap(err, "failed to review code change", "file", change.NewPath)
-			log.Error("failed to review code change", "error", err, "file", change.NewPath)
+			errs.Wrap(err, "failed to generate clean diff", "file", change.NewPath)
+			log.Error("failed to generate clean diff", "error", err, "file", change.NewPath)
+			continue
+		}
+
+		enhancedCtx.CleanDiff = cleanDiff
+
+		// Perform enhanced review with rich context
+		promptsCtx := s.convertToPromptsContext(enhancedCtx)
+		reviewResult, err := s.agent.ReviewCodeWithContext(ctx, change.NewPath, promptsCtx)
+		if err != nil {
+			errs.Wrap(err, "failed to review code change with enhanced context", "file", change.NewPath)
+			log.Error("failed to review code change with enhanced context", "error", err, "file", change.NewPath)
 			continue
 		}
 
 		// Skip if no issues found
 		if reviewResult == nil || !reviewResult.HasIssues || len(reviewResult.Comments) == 0 {
-			log.Debug("no issues found in file", "file", change.NewPath)
+			log.Debug("no significant issues found in file after enhanced analysis", "file", change.NewPath)
 			s.processedMRs.Set(request.String(), change.NewPath, fileHash)
 			continue
 		}
 
-		// Enhance comments with diff position information and set programming language
-		if err := s.parser.enhanceReviewComments(change.Diff, reviewResult.Comments); err != nil {
-			log.Warn("failed to enhance comments with diff positions", "error", err)
-		}
-
-		// Set programming language for each comment if not already set
-		detectedLanguage := detectProgrammingLanguage(change.NewPath)
-		for _, comment := range reviewResult.Comments {
-			if comment.CodeLanguage == "" {
-				comment.CodeLanguage = detectedLanguage
-			}
-		}
-
-		// Create line-specific comments
-		for _, reviewComment := range reviewResult.Comments {
-			// Ensure file path is set (AI might not include it in JSON response)
-			if reviewComment.FilePath == "" {
-				reviewComment.FilePath = change.NewPath
-			}
-
-			comment := ToComment(s.cfg.Language, reviewComment)
-			comment.Type = model.CommentTypeInline
-
-			err = s.provider.CreateComment(ctx, request.ProjectID, request.MergeRequest.IID, comment)
-			if err != nil {
-				errs.Wrap(err, "failed to create comment", "file", change.NewPath, "line", reviewComment.Line)
-				log.Error("failed to create comment", "error", err, "file", change.NewPath, "line", reviewComment.Line)
-				continue
-			}
-
-			commentsCreated++
-			log.Info("created line-specific comment", "file", change.NewPath, "line", reviewComment.Line, "type", reviewComment.IssueType)
-		}
-
+		commentsCreated += s.processReviewResults(ctx, request, change, reviewResult, log)
 		s.processedMRs.Set(request.String(), change.NewPath, fileHash)
-		log.Info("file reviewed with line-specific comments", "file", change.NewPath, "comments", len(reviewResult.Comments))
+		log.Info("file reviewed with enhanced context analysis", "file", change.NewPath, "comments", len(reviewResult.Comments))
 	}
 
 	return commentsCreated, errs.Err()
+}
+
+// performBasicReview performs basic review without enhanced context (fallback)
+func (s *Reviewer) performBasicReview(ctx context.Context, request model.ReviewRequest, change *model.FileDiff, log logze.Logger) (*model.FileReviewResult, error) {
+	fullFileContent, cleanDiff, err := s.prepareFileContentAndDiff(ctx, request, change, log)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to prepare file content and diff")
+	}
+	return s.agent.ReviewCode(ctx, change.NewPath, fullFileContent, cleanDiff)
+}
+
+// processReviewResults processes the review results and creates comments
+func (s *Reviewer) processReviewResults(ctx context.Context, request model.ReviewRequest, change *model.FileDiff, reviewResult *model.FileReviewResult, log logze.Logger) int {
+	commentsCreated := 0
+
+	// Enhance comments with diff position information and set programming language
+	if err := s.parser.enhanceReviewComments(change.Diff, reviewResult.Comments); err != nil {
+		log.Warn("failed to enhance comments with diff positions", "error", err)
+	}
+
+	// Get enhanced context for quality scoring
+	// enhancedCtx, err := s.contextGatherer.GatherEnhancedContext(ctx, request, change)
+	// if err != nil {
+	// 	log.Warn("failed to gather context for quality scoring", "error", err)
+	// 	enhancedCtx = &EnhancedContext{} // Use empty context as fallback
+	// }
+
+	// Apply quality scoring and filtering
+	originalCount := len(reviewResult.Comments)
+	//reviewResult.Comments = s.qualityScorer.ScoreAndFilterComments(reviewResult.Comments, enhancedCtx)
+	filteredCount := len(reviewResult.Comments)
+
+	if originalCount > filteredCount {
+		log.Info("quality scorer filtered comments",
+			"original", originalCount,
+			"filtered", filteredCount,
+			"removed", originalCount-filteredCount)
+	}
+
+	// Set programming language for each comment if not already set
+	detectedLanguage := detectProgrammingLanguage(change.NewPath)
+	for _, comment := range reviewResult.Comments {
+		if comment.CodeLanguage == "" {
+			comment.CodeLanguage = detectedLanguage
+		}
+	}
+
+	// Create line-specific comments
+	for _, reviewComment := range reviewResult.Comments {
+		// Ensure file path is set (AI might not include it in JSON response)
+		if reviewComment.FilePath == "" {
+			reviewComment.FilePath = change.NewPath
+		}
+
+		comment := ToComment(s.cfg.Language, reviewComment)
+		comment.Type = model.CommentTypeInline
+
+		err := s.provider.CreateComment(ctx, request.ProjectID, request.MergeRequest.IID, comment)
+		if err != nil {
+			log.Error("failed to create comment", "error", err, "file", change.NewPath, "line", reviewComment.Line)
+			continue
+		}
+
+		commentsCreated++
+		log.Info("created high-quality comment",
+			"file", change.NewPath,
+			"line", reviewComment.Line,
+			"type", reviewComment.IssueType,
+			"priority", reviewComment.Priority,
+			"confidence", reviewComment.Confidence)
+	}
+
+	return commentsCreated
 }
 
 // prepareFileContentAndDiff gets the original file content (before changes) and clean diff format
@@ -112,7 +179,6 @@ func (s *Reviewer) prepareFileContentAndDiff(ctx context.Context, request model.
 		return "", cleanDiff, nil
 	}
 
-	change.OldPath = lang.Check(change.OldPath, change.NewPath)
 	// Handle deleted files - get original content before deletion
 	if change.IsDeleted {
 		originalContent, err := s.getOriginalFileContent(ctx, request, change.OldPath, log)
@@ -190,9 +256,9 @@ func ToComment(language model.Language, lrc *model.ReviewAIComment) *model.Comme
 	comment.WriteString("**: ")
 	comment.WriteString(reviewHeaders.GetConfidence(lrc.Confidence))
 	comment.WriteString("\n**")
-	comment.WriteString(reviewHeaders.SeverityHeader)
+	comment.WriteString(reviewHeaders.PriorityHeader)
 	comment.WriteString("**: ")
-	comment.WriteString(reviewHeaders.GetSeverity(lrc.Severity))
+	comment.WriteString(reviewHeaders.GetPriority(lrc.Priority))
 	comment.WriteString("\n\n")
 	if lrc.Title != "" {
 		comment.WriteString("### ")
@@ -205,16 +271,24 @@ func ToComment(language model.Language, lrc *model.ReviewAIComment) *model.Comme
 	}
 
 	// Add current problematic code section if we have a code snippet
-	if lrc.Suggestion != "" && lrc.CodeSnippet != "" {
+	if lrc.Suggestion != "" {
 		comment.WriteString("### ")
 		comment.WriteString(reviewHeaders.SuggestionHeader)
 		comment.WriteString("\n\n")
 		comment.WriteString(lrc.Suggestion)
-		comment.WriteString("\n\n```")
-		comment.WriteString(lrc.CodeLanguage)
-		comment.WriteString("\n")
-		comment.WriteString(lrc.CodeSnippet)
-		comment.WriteString("\n```\n\n")
+		if lrc.CodeSnippet != "" {
+			comment.WriteString("\n\n")
+
+			if strings.HasPrefix(lrc.CodeSnippet, "`") {
+				comment.WriteString(lrc.CodeSnippet)
+			} else {
+				comment.WriteString("```")
+				comment.WriteString(lrc.CodeLanguage)
+				comment.WriteString("\n")
+				comment.WriteString(lrc.CodeSnippet)
+				comment.WriteString("\n```")
+			}
+		}
 	}
 
 	body := comment.String()
@@ -458,4 +532,86 @@ func detectProgrammingLanguage(filePath string) string {
 
 	// If we can't determine the language, return a generic text format
 	return "text"
+}
+
+// convertToPromptsContext converts reviewer.EnhancedContext to prompts.EnhancedContext
+func (s *Reviewer) convertToPromptsContext(ctx *EnhancedContext) *prompts.EnhancedContext {
+	return &prompts.EnhancedContext{
+		FilePath:         ctx.FilePath,
+		FileContent:      ctx.FileContent,
+		CleanDiff:        ctx.CleanDiff,
+		ImportedPackages: ctx.ImportedPackages,
+		RelatedFiles: func() []prompts.RelatedFile {
+			var converted []prompts.RelatedFile
+			for _, rf := range ctx.RelatedFiles {
+				converted = append(converted, prompts.RelatedFile{
+					Path:         rf.Path,
+					Relationship: rf.Relationship,
+					Snippet:      rf.Snippet,
+				})
+			}
+			return converted
+		}(),
+		FunctionSignatures: func() []prompts.FunctionSignature {
+			var converted []prompts.FunctionSignature
+			for _, fs := range ctx.FunctionSignatures {
+				converted = append(converted, prompts.FunctionSignature{
+					Name:       fs.Name,
+					Parameters: fs.Parameters,
+					Returns:    fs.Returns,
+					IsExported: fs.IsExported,
+					LineNumber: fs.LineNumber,
+				})
+			}
+			return converted
+		}(),
+		TypeDefinitions: func() []prompts.TypeDefinition {
+			var converted []prompts.TypeDefinition
+			for _, td := range ctx.TypeDefinitions {
+				converted = append(converted, prompts.TypeDefinition{
+					Name:       td.Name,
+					Type:       td.Type,
+					Fields:     td.Fields,
+					Methods:    td.Methods,
+					IsExported: td.IsExported,
+					LineNumber: td.LineNumber,
+				})
+			}
+			return converted
+		}(),
+		UsagePatterns: func() []prompts.UsagePattern {
+			var converted []prompts.UsagePattern
+			for _, up := range ctx.UsagePatterns {
+				converted = append(converted, prompts.UsagePattern{
+					Pattern:      up.Pattern,
+					Description:  up.Description,
+					Examples:     up.Examples,
+					BestPractice: up.BestPractice,
+				})
+			}
+			return converted
+		}(),
+		SecurityContext: prompts.SecurityContext{
+			HasAuthenticationLogic:  ctx.SecurityContext.HasAuthenticationLogic,
+			HasInputValidation:      ctx.SecurityContext.HasInputValidation,
+			HandlesUserInput:        ctx.SecurityContext.HandlesUserInput,
+			AccessesDatabase:        ctx.SecurityContext.AccessesDatabase,
+			HandlesFileOperations:   ctx.SecurityContext.HandlesFileOperations,
+			NetworkOperations:       ctx.SecurityContext.NetworkOperations,
+			CryptographicOperations: ctx.SecurityContext.CryptographicOperations,
+		},
+		SemanticChanges: func() []prompts.SemanticChange {
+			var converted []prompts.SemanticChange
+			for _, sc := range ctx.SemanticChanges {
+				converted = append(converted, prompts.SemanticChange{
+					Type:        sc.Type,
+					Impact:      sc.Impact,
+					Description: sc.Description,
+					Lines:       sc.Lines,
+					Context:     sc.Context,
+				})
+			}
+			return converted
+		}(),
+	}
 }
