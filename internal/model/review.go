@@ -5,6 +5,15 @@ import (
 	"time"
 )
 
+type ReviewType string
+
+const (
+	ReviewTypeDescription   ReviewType = "description"
+	ReviewTypeCodeReview    ReviewType = "code"
+	ReviewTypeListOfChanges ReviewType = "list_of_changes"
+	ReviewTypeArchitecture  ReviewType = "architecture"
+)
+
 // CodeEvent represents a webhook event from any provider
 type CodeEvent struct {
 	Type         string

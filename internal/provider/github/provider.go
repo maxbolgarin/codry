@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -270,18 +271,133 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 	}
 	owner, repo := parts[0], parts[1]
 
+	// Check if this is a line-specific comment
+	if comment.Type == model.CommentTypeInline && comment.FilePath != "" && comment.Line > 0 {
+		p.logger.Debug("creating positioned comment",
+			"file", comment.FilePath,
+			"line", comment.Line,
+			"type", comment.Type)
+		return p.createPositionedComment(ctx, owner, repo, mrIID, comment)
+	}
+
+	// Create regular issue comment for general comments
+	p.logger.Debug("creating regular comment", "type", comment.Type, "has_file", comment.FilePath != "", "has_line", comment.Line > 0)
+	return p.createRegularComment(ctx, owner, repo, mrIID, comment)
+}
+
+func (p *Provider) createPositionedComment(ctx context.Context, owner, repo string, mrIID int, comment *model.Comment) error {
+	// Get the pull request to obtain the commit SHA
+	pr, _, err := p.client.PullRequests.Get(ctx, owner, repo, mrIID)
+	if err != nil {
+		return errm.Wrap(err, "failed to get pull request for commit SHA")
+	}
+
+	head := pr.GetHead()
+	if head == nil {
+		return errm.New("head is nil")
+	}
+
+	commitID := head.GetSHA()
+	if commitID == "" {
+		return errm.New("commit SHA is empty")
+	}
+
+	// Create pull request review comment with proper GitHub API format
+	reviewComment := &github.PullRequestComment{
+		Body:     &comment.Body,
+		Path:     &comment.FilePath,
+		CommitID: &commitID,
+	}
+
+	// Handle range comments vs single line comments
+	if comment.Type == model.CommentTypeReview || comment.Type == model.CommentTypeInline {
+		// Check if this is a range comment by parsing the comment body
+		if p.isRangeComment(comment.Body) {
+			startLine, endLine := p.extractLineRange(comment.Body)
+			if startLine > 0 && endLine > startLine {
+				// GitHub range comment format
+				side := "RIGHT" // Comments on new lines are on the RIGHT side
+				reviewComment.StartLine = &startLine
+				reviewComment.Line = &endLine
+				reviewComment.Side = &side
+
+				p.logger.Debug("creating GitHub range comment",
+					"file", comment.FilePath,
+					"start_line", startLine,
+					"end_line", endLine,
+					"commit_id", commitID[:8])
+			} else {
+				// Fall back to single line
+				p.setSingleLineComment(reviewComment, comment)
+			}
+		} else {
+			// Single line comment
+			p.setSingleLineComment(reviewComment, comment)
+		}
+	} else {
+		// Regular single line comment
+		p.setSingleLineComment(reviewComment, comment)
+	}
+
+	_, _, err = p.client.PullRequests.CreateComment(ctx, owner, repo, mrIID, reviewComment)
+	if err != nil {
+		return errm.Wrap(err, "failed to create positioned comment")
+	}
+
+	return nil
+}
+
+// setSingleLineComment sets up a single line comment
+func (p *Provider) setSingleLineComment(reviewComment *github.PullRequestComment, comment *model.Comment) {
+	if comment.Line > 0 {
+		line := comment.Line
+		side := "RIGHT" // Comments on new lines are on the RIGHT side
+		reviewComment.Line = &line
+		reviewComment.Side = &side
+	}
+
+	// Use position as fallback
+	if comment.Position > 0 {
+		reviewComment.Position = &comment.Position
+	}
+}
+
+// isRangeComment checks if a comment body indicates it's a range comment
+func (p *Provider) isRangeComment(body string) bool {
+	return strings.Contains(body, "*(lines ") && strings.Contains(body, "-")
+}
+
+// extractLineRange extracts start and end line numbers from comment body
+func (p *Provider) extractLineRange(body string) (int, int) {
+	// Look for pattern: *(lines 19-32)*
+	re := regexp.MustCompile(`\*\(lines (\d+)-(\d+)\)\*`)
+	matches := re.FindStringSubmatch(body)
+
+	if len(matches) >= 3 {
+		startLine, _ := strconv.Atoi(matches[1])
+		endLine, _ := strconv.Atoi(matches[2])
+		p.logger.Debug("extracted line range from comment",
+			"start_line", startLine,
+			"end_line", endLine,
+			"pattern_found", true)
+		return startLine, endLine
+	}
+
+	p.logger.Debug("no line range found in comment body", "pattern_found", false)
+	return 0, 0
+}
+
+// createRegularComment creates a regular (non-positioned) issue comment
+func (p *Provider) createRegularComment(ctx context.Context, owner, repo string, mrIID int, comment *model.Comment) error {
 	// Create issue comment (GitHub treats PR comments as issue comments)
 	githubComment := &github.IssueComment{
 		Body: &comment.Body,
 	}
 
-	createdComment, _, err := p.client.Issues.CreateComment(ctx, owner, repo, mrIID, githubComment)
+	_, _, err := p.client.Issues.CreateComment(ctx, owner, repo, mrIID, githubComment)
 	if err != nil {
 		return errm.Wrap(err, "failed to create pull request comment")
 	}
-
-	// Update comment with the created ID
-	comment.ID = strconv.FormatInt(*createdComment.ID, 10)
 
 	return nil
 }
@@ -550,4 +666,38 @@ func (p *Provider) GetMergeRequestUpdates(ctx context.Context, projectID string,
 	}
 
 	return p.ListMergeRequests(ctx, projectID, filter)
+}
+
+// GetFileContent retrieves the content of a file at a specific commit/SHA
+func (p *Provider) GetFileContent(ctx context.Context, projectID, filePath, commitSHA string) (string, error) {
+	// Parse owner/repo from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return "", errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+	}
+	owner, repo := parts[0], parts[1]
+
+	// Get file content at specific commit
+	fileContent, _, resp, err := p.client.Repositories.GetContents(ctx, owner, repo, filePath, &github.RepositoryContentGetOptions{
+		Ref: commitSHA,
+	})
+	if err != nil {
+		return "", errm.Wrap(err, "failed to get file content from GitHub")
+	}
+
+	if resp.StatusCode != 200 {
+		return "", errm.New("GitHub API returned status %d", resp.StatusCode)
+	}
+
+	if fileContent == nil {
+		return "", errm.New("file content is nil")
+	}
+
+	// Decode content (GitHub returns base64 encoded content)
+	content, err := fileContent.GetContent()
+	if err != nil {
+		return "", errm.Wrap(err, "failed to decode file content")
+	}
+
+	return content, nil
 }

@@ -2,6 +2,8 @@ package reviewer
 
 import (
 	"time"
+
+	"github.com/maxbolgarin/codry/internal/model"
 )
 
 type Config struct {
@@ -13,6 +15,8 @@ type Config struct {
 	UpdateDescriptionOnMR       bool `yaml:"update_description_on_mr" env:"REVIEW_UPDATE_DESCRIPTION_ON_MR"`
 	EnableDescriptionGeneration bool `yaml:"enable_description_generation" env:"REVIEW_ENABLE_DESCRIPTION_GENERATION"`
 	EnableCodeReview            bool `yaml:"enable_code_review" env:"REVIEW_ENABLE_CODE_REVIEW"`
+
+	Language model.Language `yaml:"language" env:"REVIEW_LANGUAGE"`
 }
 
 // FileFilter represents criteria for filtering files to review

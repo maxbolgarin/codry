@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/maxbolgarin/abstract"
+	"github.com/maxbolgarin/codry/internal/agent"
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/errm"
@@ -17,8 +18,9 @@ import (
 // Reviewer implements the ReviewService interface
 type Reviewer struct {
 	provider interfaces.CodeProvider
-	agent    interfaces.AIAgent
+	agent    *agent.Agent
 	pool     *ants.Pool
+	parser   *diffParser
 
 	cfg Config
 	log logze.Logger
@@ -28,10 +30,14 @@ type Reviewer struct {
 }
 
 // New creates a new reviewer
-func New(cfg Config, provider interfaces.CodeProvider, agent interfaces.AIAgent) (*Reviewer, error) {
+func New(cfg Config, provider interfaces.CodeProvider, agent *agent.Agent) (*Reviewer, error) {
 	pool, err := ants.NewPool(100)
 	if err != nil {
 		return nil, errm.Wrap(err, "failed to create ants pool")
+	}
+
+	if cfg.Language == "" {
+		cfg.Language = model.LanguageEnglish
 	}
 
 	s := &Reviewer{
@@ -40,6 +46,7 @@ func New(cfg Config, provider interfaces.CodeProvider, agent interfaces.AIAgent)
 		cfg:          cfg,
 		log:          logze.With("component", "reviewer"),
 		pool:         pool,
+		parser:       newDiffParser(),
 		processedMRs: abstract.NewSafeMapOfMaps[string, string, string](),
 	}
 

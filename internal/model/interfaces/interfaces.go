@@ -32,25 +32,12 @@ type CodeProvider interface {
 
 	// User operations
 	GetCurrentUser(ctx context.Context) (*model.User, error)
-}
 
-// AIAgent defines the interface for AI code review agents
-type AIAgent interface {
-	GenerateDescription(ctx context.Context, fullDiff string) (string, error)
-	ReviewCode(ctx context.Context, filePath, diff string) (string, error)
-	SummarizeChanges(ctx context.Context, changes []*model.FileDiff) (string, error)
-	GenerateCommentReply(ctx context.Context, originalComment, replyContext string) (string, error)
+	// GetFileContent retrieves the content of a file at a specific commit/SHA
+	GetFileContent(ctx context.Context, projectID, filePath, commitSHA string) (string, error)
 }
 
 // AgentAPI defines the interface for calling LLM AI models
 type AgentAPI interface {
 	CallAPI(ctx context.Context, req model.APIRequest) (model.APIResponse, error)
-}
-
-// PromptBuilder defines the interface for building prompts for AI agents
-type PromptBuilder interface {
-	BuildDescriptionPrompt(diff string) model.Prompt
-	BuildReviewPrompt(filename, diff string) model.Prompt
-	BuildSummaryPrompt(changes []*model.FileDiff) model.Prompt
-	BuildCommentReplyPrompt(originalComment, replyContext string) model.Prompt
 }

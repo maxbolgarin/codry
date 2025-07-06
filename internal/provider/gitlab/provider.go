@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/maxbolgarin/codry/internal/model"
@@ -225,18 +227,72 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 		return errm.Wrap(err, "invalid project ID")
 	}
 
+	// Check if this is a line-specific comment
+	if comment.Type == model.CommentTypeInline && comment.FilePath != "" && comment.Line > 0 {
+		// Create a positioned discussion for line-specific comments
+		baseSHA := "base"
+		startSHA := "start"
+		headSHA := "head"
+		positionType := "text"
+		newPath := comment.FilePath
+		newLine := comment.Line
+
+		positionOpts := &gitlab.PositionOptions{
+			BaseSHA:      &baseSHA,
+			StartSHA:     &startSHA,
+			HeadSHA:      &headSHA,
+			PositionType: &positionType,
+			NewPath:      &newPath,
+			NewLine:      &newLine,
+		}
+
+		// Handle range comments if this is a review comment
+		if (comment.Type == model.CommentTypeReview || comment.Type == model.CommentTypeInline) && p.isRangeComment(comment.Body) {
+			startLine, endLine := p.extractLineRange(comment.Body)
+			if startLine > 0 && endLine > startLine {
+				// GitLab doesn't have native range comments, but we can use the start line
+				// and include range information in the comment body
+				positionOpts.NewLine = &startLine
+
+				p.logger.Debug("creating GitLab range comment",
+					"file", comment.FilePath,
+					"start_line", startLine,
+					"end_line", endLine)
+			}
+		}
+
+		discussionOpts := &gitlab.CreateMergeRequestDiscussionOptions{
+			Body:     &comment.Body,
+			Position: positionOpts,
+		}
+
+		discussion, _, err := p.client.Discussions.CreateMergeRequestDiscussion(projectIDInt, mrIID, discussionOpts)
+		if err != nil {
+			// If positioned comment fails, fall back to regular comment
+			p.logger.Warn("failed to create positioned comment, falling back to regular comment", "error", err)
+			return p.createRegularComment(ctx, projectIDInt, mrIID, comment)
+		}
+
+		comment.ID = discussion.ID
+		return nil
+	}
+
+	// Create regular discussion for general comments
+	return p.createRegularComment(ctx, projectIDInt, mrIID, comment)
+}
+
+// createRegularComment creates a regular (non-positioned) discussion
+func (p *Provider) createRegularComment(ctx context.Context, projectID int, mrIID int, comment *model.Comment) error {
 	discussionOpts := &gitlab.CreateMergeRequestDiscussionOptions{
 		Body: &comment.Body,
 	}
 
-	discussion, _, err := p.client.Discussions.CreateMergeRequestDiscussion(projectIDInt, mrIID, discussionOpts)
+	discussion, _, err := p.client.Discussions.CreateMergeRequestDiscussion(projectID, mrIID, discussionOpts)
 	if err != nil {
 		return errm.Wrap(err, "failed to create merge request discussion")
 	}
 
-	// Update comment with the created ID
 	comment.ID = discussion.ID
-
 	return nil
 }
 
@@ -440,7 +496,7 @@ func (p *Provider) ListMergeRequests(ctx context.Context, projectID string, filt
 func (p *Provider) GetMergeRequestUpdates(ctx context.Context, projectID string, since time.Time) ([]*model.MergeRequest, error) {
 	filter := &model.MergeRequestFilter{
 		UpdatedAfter: &since,
-		State:        []string{"opened"}, // Only get open MRs for updates
+		State:        []string{"opened"}, // GitLab uses "opened" instead of "open"
 		Limit:        100,                // Reasonable default
 	}
 
@@ -485,4 +541,52 @@ func (p *Provider) IsMergeRequestEvent(event *model.CodeEvent) bool {
 
 	p.logger.Debug("merge request event should be processed", "action", event.Action)
 	return true
+}
+
+// isRangeComment checks if a comment body indicates it's a range comment
+func (p *Provider) isRangeComment(body string) bool {
+	return strings.Contains(body, "*(lines ") && strings.Contains(body, "-")
+}
+
+// extractLineRange extracts start and end line numbers from comment body
+func (p *Provider) extractLineRange(body string) (int, int) {
+	// Look for pattern: *(lines 19-32)*
+	re := regexp.MustCompile(`\*\(lines (\d+)-(\d+)\)\*`)
+	matches := re.FindStringSubmatch(body)
+
+	if len(matches) >= 3 {
+		startLine, _ := strconv.Atoi(matches[1])
+		endLine, _ := strconv.Atoi(matches[2])
+		return startLine, endLine
+	}
+
+	return 0, 0
+}
+
+// GetFileContent retrieves the content of a file at a specific commit/SHA
+func (p *Provider) GetFileContent(ctx context.Context, projectID, filePath, commitSHA string) (string, error) {
+	projectIDInt, err := strconv.Atoi(projectID)
+	if err != nil {
+		return "", errm.Wrap(err, "invalid project ID")
+	}
+
+	// Get file content at specific commit
+	fileOpts := &gitlab.GetFileOptions{
+		Ref: &commitSHA,
+	}
+
+	file, resp, err := p.client.RepositoryFiles.GetFile(projectIDInt, filePath, fileOpts)
+	if err != nil {
+		return "", errm.Wrap(err, "failed to get file content from GitLab")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", errm.New("GitLab API returned status %d", resp.StatusCode)
+	}
+
+	if file == nil {
+		return "", errm.New("file content is nil")
+	}
+
+	return file.Content, nil
 }

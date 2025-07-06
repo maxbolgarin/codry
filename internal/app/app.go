@@ -5,7 +5,6 @@ import (
 
 	"github.com/maxbolgarin/codry/internal/agent"
 	"github.com/maxbolgarin/codry/internal/config"
-	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/codry/internal/provider"
 	"github.com/maxbolgarin/codry/internal/reviewer"
 	"github.com/maxbolgarin/codry/internal/server"
@@ -16,8 +15,6 @@ import (
 
 // Codry is the main service that orchestrates all components
 type Codry struct {
-	provider       interfaces.CodeProvider
-	agent          interfaces.AIAgent
 	reviewer       *reviewer.Reviewer
 	webhookHandler *server.Server
 	fetcher        *provider.Fetcher
@@ -64,26 +61,26 @@ func (s *Codry) RunReview(ctx context.Context, projectID string) error {
 func (s *Codry) init(ctx contem.Context, cfg config.Config) (err error) {
 
 	// Create VCS provider
-	s.provider, err = provider.NewProvider(cfg.Provider)
+	codeProvider, err := provider.NewProvider(cfg.Provider)
 	if err != nil {
 		return errm.Wrap(err, "failed to create VCS provider")
 	}
-	s.fetcher = provider.NewFetcher(s.provider)
+	s.fetcher = provider.NewFetcher(codeProvider)
 
 	// Create AI agent
-	s.agent, err = agent.New(ctx, cfg.Agent)
+	llmAgent, err := agent.New(ctx, cfg.Agent)
 	if err != nil {
 		return errm.Wrap(err, "failed to create AI agent")
 	}
 
 	// Create review service - this is the central orchestrator
-	s.reviewer, err = reviewer.New(cfg.Reviewer, s.provider, s.agent)
+	s.reviewer, err = reviewer.New(cfg.Reviewer, codeProvider, llmAgent)
 	if err != nil {
 		return errm.Wrap(err, "failed to create review service")
 	}
 
 	// Create webhook handler - just an event source
-	s.webhookHandler, err = server.New(cfg.Server, s.provider, s.reviewer)
+	s.webhookHandler, err = server.New(cfg.Server, codeProvider, s.reviewer)
 	if err != nil {
 		return errm.Wrap(err, "failed to create webhook handler")
 	}

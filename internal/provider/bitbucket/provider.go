@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -266,10 +267,27 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 
 	// Add inline comment data if file path and line are specified
 	if comment.FilePath != "" && comment.Line > 0 {
-		commentData["inline"] = map[string]any{
+		inlineData := map[string]any{
 			"path": comment.FilePath,
 			"to":   comment.Line,
 		}
+
+		// Handle range comments if this is a review comment
+		if (comment.Type == model.CommentTypeReview || comment.Type == model.CommentTypeInline) && p.isRangeComment(comment.Body) {
+			startLine, endLine := p.extractLineRange(comment.Body)
+			if startLine > 0 && endLine > startLine {
+				// Bitbucket supports range comments with from/to
+				inlineData["from"] = startLine
+				inlineData["to"] = endLine
+
+				p.logger.Debug("creating Bitbucket range comment",
+					"file", comment.FilePath,
+					"start_line", startLine,
+					"end_line", endLine)
+			}
+		}
+
+		commentData["inline"] = inlineData
 	}
 
 	_, err := p.client.Post(ctx, apiURL, commentData)
@@ -278,6 +296,26 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 	}
 
 	return nil
+}
+
+// isRangeComment checks if a comment body indicates it's a range comment
+func (p *Provider) isRangeComment(body string) bool {
+	return strings.Contains(body, "*(lines ") && strings.Contains(body, "-")
+}
+
+// extractLineRange extracts start and end line numbers from comment body
+func (p *Provider) extractLineRange(body string) (int, int) {
+	// Look for pattern: *(lines 19-32)*
+	re := regexp.MustCompile(`\*\(lines (\d+)-(\d+)\)\*`)
+	matches := re.FindStringSubmatch(body)
+
+	if len(matches) >= 3 {
+		startLine, _ := strconv.Atoi(matches[1])
+		endLine, _ := strconv.Atoi(matches[2])
+		return startLine, endLine
+	}
+
+	return 0, 0
 }
 
 // GetComments retrieves comments from a pull request
@@ -635,4 +673,24 @@ func (p *Provider) GetMergeRequestUpdates(ctx context.Context, projectID string,
 	}
 
 	return p.ListMergeRequests(ctx, projectID, filter)
+}
+
+// GetFileContent retrieves the content of a file at a specific commit/SHA
+func (p *Provider) GetFileContent(ctx context.Context, projectID, filePath, commitSHA string) (string, error) {
+	// Parse workspace/repo_slug from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return "", errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+	}
+	workspace, repoSlug := parts[0], parts[1]
+
+	// Build API URL for file content at specific commit
+	apiURL := fmt.Sprintf("repositories/%s/%s/src/%s/%s", workspace, repoSlug, commitSHA, filePath)
+
+	resp, err := p.client.Get(ctx, apiURL)
+	if err != nil {
+		return "", errm.Wrap(err, "failed to get file content from Bitbucket")
+	}
+
+	return string(resp.Body()), nil
 }

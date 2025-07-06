@@ -53,10 +53,85 @@ type Comment struct {
 	ID        string
 	Body      string
 	FilePath  string
-	Line      int
+	Line      int         // Line number in the new file (for line-specific comments)
+	OldLine   int         // Line number in the old file (for context)
+	Position  int         // Position in the diff (provider-specific)
+	Type      CommentType // Type of comment
 	Author    User
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// CommentType defines the type of comment
+type CommentType string
+
+const (
+	CommentTypeGeneral CommentType = "general" // General MR/PR comment
+	CommentTypeInline  CommentType = "inline"  // Inline code comment
+	CommentTypeReview  CommentType = "review"  // Review comment with specific feedback
+	CommentTypeSummary CommentType = "summary" // Summary comment
+)
+
+// ReviewAIComment represents a structured review comment for a specific line or range of lines
+type ReviewAIComment struct {
+	FilePath     string           `json:"file_path"`
+	Line         int              `json:"line"`               // Start line (for single line comments)
+	EndLine      int              `json:"end_line,omitempty"` // End line (for range comments, optional)
+	OldLine      int              `json:"old_line,omitempty"`
+	Position     int              `json:"position,omitempty"`
+	IssueType    IssueType        `json:"issue_type"`
+	Confidence   ReviewConfidence `json:"confidence"`
+	Severity     ReviewSeverity   `json:"severity"`
+	CodeLanguage string           `json:"code_language"`
+	Title        string           `json:"title"`
+	Description  string           `json:"description"`
+	Suggestion   string           `json:"suggestion,omitempty"`
+	CodeSnippet  string           `json:"code_snippet,omitempty"`
+}
+
+// IsRangeComment returns true if this comment spans mul	tiple lines
+func (lrc *ReviewAIComment) IsRangeComment() bool {
+	return lrc.EndLine > 0 && lrc.EndLine > lrc.Line
+}
+
+// IssueType categorizes the type of issue found
+type IssueType string
+
+const (
+	IssueTypeCritical    IssueType = "critical"
+	IssueTypeBug         IssueType = "bug"
+	IssueTypePerformance IssueType = "performance"
+	IssueTypeSecurity    IssueType = "security"
+	IssueTypeRefactor    IssueType = "refactor"
+	IssueTypeOther       IssueType = "other"
+)
+
+// ReviewConfidence defines the confidence level of review issues by AI
+type ReviewConfidence string
+
+const (
+	ConfidenceVeryHigh ReviewConfidence = "very_high"
+	ConfidenceHigh     ReviewConfidence = "high"
+	ConfidenceMedium   ReviewConfidence = "medium"
+	ConfidenceLow      ReviewConfidence = "low"
+)
+
+// ReviewSeverity defines the severity level of review issues by AI
+type ReviewSeverity string
+
+const (
+	ReviewSeverityVeryHigh ReviewSeverity = "very_high"
+	ReviewSeverityHigh     ReviewSeverity = "high"
+	ReviewSeverityMedium   ReviewSeverity = "medium"
+	ReviewSeverityLow      ReviewSeverity = "low"
+)
+
+// FileReviewResult represents the result of a file review
+type FileReviewResult struct {
+	FilePath  string             `json:"file_path"`
+	Comments  []*ReviewAIComment `json:"comments"`
+	Summary   string             `json:"summary,omitempty"`
+	HasIssues bool               `json:"has_issues"`
 }
 
 // MergeRequestFilter represents criteria for filtering merge requests

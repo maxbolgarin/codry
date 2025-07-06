@@ -6,6 +6,60 @@ import "github.com/maxbolgarin/codry/internal/model"
 type LanguageConfig struct {
 	Language     model.Language `yaml:"language"`     // Language code (en, es, fr, de, ru, etc.)
 	Instructions string         `yaml:"instructions"` // Language-specific instructions for the AI
+
+	DescriptionHeaders        DescriptionHeaders        `yaml:"description_headers"`
+	ListOfChangesHeaders      ListOfChangesHeaders      `yaml:"list_of_changes_headers"`
+	ArchitectureReviewHeaders ArchitectureReviewHeaders `yaml:"architecture_review_headers"`
+	CodeReviewHeaders         CodeReviewHeaders         `yaml:"code_review_headers"`
+}
+
+type DescriptionHeaders struct {
+	Title                    string `yaml:"title"`
+	NewFeaturesHeader        string `yaml:"new_features_header"`
+	BugFixesHeader           string `yaml:"bug_fixes_header"`
+	RefactoringHeader        string `yaml:"refactoring_header"`
+	TestingHeader            string `yaml:"testing_header"`
+	CIAndBuildHeader         string `yaml:"ci_and_build_header"`
+	DocsImprovementHeader    string `yaml:"docs_improvement_header"`
+	RemovalsAndCleanupHeader string `yaml:"removals_and_cleanup_header"`
+	OtherChangesHeader       string `yaml:"other_changes_header"`
+}
+
+type ListOfChangesHeaders struct {
+	GeneralHeader string `yaml:"general_header"`
+	// TODO: number of changed files
+	// TODO: categorize changes by type
+}
+
+type ArchitectureReviewHeaders struct {
+	GeneralHeader            string `yaml:"general_header"`
+	ArchitectureIssuesHeader string `yaml:"architecture_issues_header"`
+	PerformanceIssuesHeader  string `yaml:"performance_issues_header"`
+	SecurityIssuesHeader     string `yaml:"security_issues_header"`
+	DocsImprovementHeader    string `yaml:"docs_improvement_header"`
+}
+
+type CodeReviewHeaders struct {
+	CriticalIssueHeader          string `yaml:"critical_issue_header"`
+	PotentialBugHeader           string `yaml:"potential_issue_header"`
+	PerformanceImprovementHeader string `yaml:"performance_improvement_header"`
+	SecurityImprovementHeader    string `yaml:"security_improvement_header"`
+	RefactorSuggestionHeader     string `yaml:"refactor_suggestion_header"`
+	OtherIssueHeader             string `yaml:"other_issue_header"`
+
+	ConfidenceHeader string `yaml:"confidence_header"`
+	SeverityHeader   string `yaml:"severity_header"`
+	SuggestionHeader string `yaml:"suggestion_header"`
+
+	ConfidenceLow      string `yaml:"confidence_low"`
+	ConfidenceMedium   string `yaml:"confidence_medium"`
+	ConfidenceHigh     string `yaml:"confidence_high"`
+	ConfidenceVeryHigh string `yaml:"confidence_very_high"`
+
+	SeverityLow      string `yaml:"severity_low"`
+	SeverityMedium   string `yaml:"severity_medium"`
+	SeverityHigh     string `yaml:"severity_high"`
+	SeverityVeryHigh string `yaml:"severity_very_high"`
 }
 
 // DefaultLanguages provides common language configurations
@@ -13,6 +67,51 @@ var DefaultLanguages = map[model.Language]LanguageConfig{
 	model.LanguageEnglish: {
 		Language:     model.LanguageEnglish,
 		Instructions: "Respond in clear, professional English. Use technical terminology appropriately.",
+
+		DescriptionHeaders: DescriptionHeaders{
+			Title:                    "🤖 Review Summary",
+			NewFeaturesHeader:        "⚡️ New features",
+			BugFixesHeader:           "🐛 Bug fixes",
+			RefactoringHeader:        "🛠️ Refactoring",
+			TestingHeader:            "🧪 Testing",
+			CIAndBuildHeader:         "🔧 CI/CD",
+			DocsImprovementHeader:    "📚 Documentation",
+			RemovalsAndCleanupHeader: "🧹 Removals and cleanup",
+			OtherChangesHeader:       "🔄 Other changes",
+		},
+		ListOfChangesHeaders: ListOfChangesHeaders{
+			GeneralHeader: "📝 List of changes",
+		},
+		ArchitectureReviewHeaders: ArchitectureReviewHeaders{
+			GeneralHeader:            "🏗️ Architecture review",
+			ArchitectureIssuesHeader: "🚨 Architecture issues",
+			PerformanceIssuesHeader:  "🚀 Performance issues",
+			SecurityIssuesHeader:     "🔒 Security issues",
+			DocsImprovementHeader:    "📚 Documentation",
+		},
+
+		CodeReviewHeaders: CodeReviewHeaders{
+			CriticalIssueHeader:          "🚨 Critical issue",
+			PotentialBugHeader:           "⚠️ Potential bug",
+			PerformanceImprovementHeader: "🚀 Performance improvement",
+			SecurityImprovementHeader:    "🔒 Security improvement",
+			RefactorSuggestionHeader:     "🛠️ Refactor suggestion",
+			OtherIssueHeader:             "🔄 Other issue",
+
+			SuggestionHeader: "💡 Suggestion",
+			ConfidenceHeader: "Model confidence",
+			SeverityHeader:   "Issue severity",
+
+			SeverityLow:      "may be added to the backlog 💭",
+			SeverityMedium:   "can be fixed later, but fix will make everything better ♻️",
+			SeverityHigh:     "should be fixed soon ⚠️",
+			SeverityVeryHigh: "must be fixed immediately ❗️",
+
+			ConfidenceLow:      "low (20-40%)",
+			ConfidenceMedium:   "medium (40-70%)",
+			ConfidenceHigh:     "high (70-90%)",
+			ConfidenceVeryHigh: "very high (90-100%)",
+		},
 	},
 	model.LanguageSpanish: {
 		Language:     model.LanguageSpanish,
@@ -50,4 +149,50 @@ var DefaultLanguages = map[model.Language]LanguageConfig{
 		Language:     model.LanguageChinese,
 		Instructions: "请用清晰、专业的中文回答。适当使用技术术语。",
 	},
+}
+
+func (dh CodeReviewHeaders) GetByType(t model.IssueType) string {
+	switch t {
+	case model.IssueTypeCritical:
+		return dh.CriticalIssueHeader
+	case model.IssueTypeBug:
+		return dh.PotentialBugHeader
+	case model.IssueTypePerformance:
+		return dh.PerformanceImprovementHeader
+	case model.IssueTypeSecurity:
+		return dh.SecurityImprovementHeader
+	case model.IssueTypeRefactor:
+		return dh.RefactorSuggestionHeader
+	case model.IssueTypeOther:
+		return dh.OtherIssueHeader
+	}
+	return ""
+}
+
+func (dh CodeReviewHeaders) GetConfidence(c model.ReviewConfidence) string {
+	switch c {
+	case model.ConfidenceVeryHigh:
+		return dh.ConfidenceVeryHigh
+	case model.ConfidenceHigh:
+		return dh.ConfidenceHigh
+	case model.ConfidenceMedium:
+		return dh.ConfidenceMedium
+	case model.ConfidenceLow:
+		return dh.ConfidenceLow
+	}
+	return ""
+}
+
+func (dh CodeReviewHeaders) GetSeverity(s model.ReviewSeverity) string {
+	switch s {
+	case model.ReviewSeverityVeryHigh:
+		return dh.SeverityVeryHigh
+	case model.ReviewSeverityHigh:
+		return dh.SeverityHigh
+	case model.ReviewSeverityMedium:
+		return dh.SeverityMedium
+	case model.ReviewSeverityLow:
+		return dh.SeverityLow
+	}
+	return ""
 }
