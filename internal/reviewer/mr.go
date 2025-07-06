@@ -2,6 +2,8 @@ package reviewer
 
 import (
 	"context"
+	"os"
+	"strings"
 
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/errm"
@@ -68,13 +70,35 @@ func (s *Reviewer) processMergeRequestReview(ctx context.Context, request model.
 		return result, nil
 	}
 
-	err := s.createDescription(ctx, request, filesToReview, totalSize, log)
+	var fullDiff strings.Builder
+	fullDiff.Grow(int(totalSize) + 30)
+	for _, change := range filesToReview {
+		fullDiff.WriteString("--- a/")
+		fullDiff.WriteString(change.OldPath)
+		fullDiff.WriteString("\n+++ b/")
+		fullDiff.WriteString(change.NewPath)
+		fullDiff.WriteString("\n")
+		fullDiff.WriteString(change.Diff)
+		fullDiff.WriteString("\n\n")
+	}
+
+	err := s.createDescription(ctx, request, fullDiff.String(), log)
 	if err != nil {
 		log.Error("failed to generate description", "error", err)
 		result.Errors = append(result.Errors, errm.Wrap(err, "failed to generate description"))
 	} else {
 		result.DescriptionUpdated = true
 	}
+
+	err = s.createChangesOverview(ctx, request, fullDiff.String(), log)
+	if err != nil {
+		log.Error("failed to generate changes overview", "error", err)
+		result.Errors = append(result.Errors, errm.Wrap(err, "failed to generate changes overview"))
+	} else {
+		result.ChangesOverviewUpdated = true
+	}
+
+	os.Exit(1)
 
 	commentsCreated, err := s.reviewCodeChanges(ctx, request, filesToReview, log)
 	if err != nil {

@@ -29,9 +29,19 @@ type DescriptionHeaders struct {
 }
 
 type ListOfChangesHeaders struct {
-	GeneralHeader string `yaml:"general_header"`
-	// TODO: number of changed files
-	// TODO: categorize changes by type
+	Title       string `yaml:"general_header"`
+	TableHeader string `yaml:"table_header"`
+
+	FeatureTypeText            string `yaml:"feature_type_text"`
+	BugFixTypeText             string `yaml:"bug_fix_type_text"`
+	RefactorTypeText           string `yaml:"refactor_type_text"`
+	TestTypeText               string `yaml:"test_type_text"`
+	DeployTypeText             string `yaml:"deploy_type_text"`
+	ConfigTypeText             string `yaml:"config_type_text"`
+	DocsImprovementTypeText    string `yaml:"docs_improvement_type_text"`
+	RemovalsAndCleanupTypeText string `yaml:"removals_and_cleanup_type_text"`
+	StyleTypeText              string `yaml:"style_type_text"`
+	OtherChangesTypeText       string `yaml:"other_changes_type_text"`
 }
 
 type ArchitectureReviewHeaders struct {
@@ -83,7 +93,18 @@ var DefaultLanguages = map[model.Language]LanguageConfig{
 			OtherChangesHeader:       "🔄 Other changes",
 		},
 		ListOfChangesHeaders: ListOfChangesHeaders{
-			GeneralHeader: "📝 List of changes",
+			Title:       "📝 List of changes",
+			TableHeader: "| File | Change type | Diff | Description |",
+
+			FeatureTypeText:            "⚡️ New feature",
+			BugFixTypeText:             "🐛 Bug fix",
+			RefactorTypeText:           "🛠️ Refactoring",
+			TestTypeText:               "🧪 Testing",
+			DeployTypeText:             "🔧 Deployment",
+			DocsImprovementTypeText:    "📚 Documentation",
+			RemovalsAndCleanupTypeText: "🧹 Removals",
+			StyleTypeText:              "🎨 Style",
+			OtherChangesTypeText:       "🔄 Other changes",
 		},
 		ArchitectureReviewHeaders: ArchitectureReviewHeaders{
 			GeneralHeader:            "🏗️ Architecture review",
@@ -152,6 +173,31 @@ var DefaultLanguages = map[model.Language]LanguageConfig{
 		Language:     model.LanguageChinese,
 		Instructions: "请用清晰、专业的中文回答。适当使用技术术语。",
 	},
+}
+
+func (lch ListOfChangesHeaders) GetByType(t model.FileChangeType) string {
+	switch t {
+	case model.FileChangeTypeNewFeature:
+		return lch.FeatureTypeText
+	case model.FileChangeTypeBugFix:
+		return lch.BugFixTypeText
+	case model.FileChangeTypeRefactor:
+		return lch.RefactorTypeText
+	case model.FileChangeTypeTest:
+		return lch.TestTypeText
+	case model.FileChangeTypeDeploy:
+		return lch.DeployTypeText
+	case model.FileChangeTypeDocs:
+		return lch.DocsImprovementTypeText
+	case model.FileChangeTypeCleanup:
+		return lch.RemovalsAndCleanupTypeText
+	case model.FileChangeTypeStyle:
+		return lch.StyleTypeText
+	case model.FileChangeTypeOther:
+		return lch.OtherChangesTypeText
+	}
+	logze.Warn("unknown file change type", "file_change_type", t)
+	return lch.OtherChangesTypeText
 }
 
 func (dh CodeReviewHeaders) GetByType(t model.IssueType) string {

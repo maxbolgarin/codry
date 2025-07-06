@@ -75,6 +75,24 @@ func (a *Agent) GenerateDescription(ctx context.Context, diff string) (string, e
 	return a.apiCall(ctx, a.pb.BuildDescriptionPrompt(diff), false)
 }
 
+// GenerateChangesOverview generates an overview of code changes§
+func (a *Agent) GenerateChangesOverview(ctx context.Context, diff string) ([]model.FileChange, error) {
+	prompt := a.pb.BuildChangesOverviewPrompt(diff)
+	response, err := a.apiCall(ctx, prompt, true)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to call API for changes overview")
+	}
+
+	var result []model.FileChange
+	err = json.Unmarshal([]byte(response), &result)
+	if err != nil {
+		fmt.Println(response)
+		return nil, errm.Wrap(err, "failed to parse changes overview response as JSON")
+	}
+
+	return result, nil
+}
+
 // ReviewCode performs a code review on the given file
 func (a *Agent) ReviewCode(ctx context.Context, filename, fullFileContent, cleanDiff string) (*model.FileReviewResult, error) {
 	prompt := a.pb.BuildReviewPrompt(filename, fullFileContent, cleanDiff)

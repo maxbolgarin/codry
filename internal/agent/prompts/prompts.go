@@ -113,6 +113,72 @@ Code changes to analyze:
 Generate a clear, well-structured description:
 `
 
+// *** Changes Overview Table Prompts ***
+
+var changesOverviewSystemPromptTemplate = `
+You are an expert software engineer specializing in quick code change analysis.
+
+Your task is to analyze file changes and categorize them efficiently for a changes overview table.
+
+CORE PRINCIPLES:
+- Be concise and precise
+- Focus on the primary type of change per file
+- Use minimal tokens while maintaining accuracy
+- Categorize changes clearly
+
+LANGUAGE INSTRUCTIONS:
+%s
+
+Keep descriptions brief (10-15 words max) and focus on the main impact.
+`
+
+var changesOverviewUserPromptTemplate = `
+Analyze the following file changes and generate type and description for each file.
+
+For each file, provide:
+1. Change type from the list provided below
+2. Brief description (10-15 words max) focusing on the main change impact
+
+OUTPUT FORMAT: Return a JSON array with objects containing "file", "type", and "description":
+[
+  {
+    "file": "filename1.ext",
+    "type": "change_type",
+    "description": "Brief description of the main change"
+  },
+  {
+    "file": "filename2.ext",
+    "type": "change_type",
+    "description": "Brief description of the main change"
+  }
+]
+
+CHANGE TYPES:
+- new_feature - New functionality or capabilities
+- bug_fix - Fixing existing issues or errors
+- refactor - Code restructuring without changing behavior
+- test - Adding or modifying tests
+- deploy - Deployment and CI/CD changes
+- docs - Documentation updates
+- cleanup - Removing unused code or dependencies
+- style - Code formatting or style changes
+- other - Other changes
+
+
+GUIDELINES:
+- Choose the PRIMARY change type per file (not multiple types)
+- Keep descriptions concise and focused on business/technical impact
+- Use action-oriented language
+- Avoid technical implementation details
+
+File changes to analyze:
+---
+%s
+---
+
+CRITICAL: Your response must be a complete, VALID JSON object. Do not truncate any fields. If you need to shorten content due to length constraints, prioritize completing the JSON structure over detailed descriptions.
+`
+
 // *** Review Prompts ***
 
 var reviewSystemPromptTemplate = `

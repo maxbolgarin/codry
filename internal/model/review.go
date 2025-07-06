@@ -38,9 +38,10 @@ func (r ReviewRequest) String() string {
 
 // ReviewResult represents the result of a code review process
 type ReviewResult struct {
-	Success            bool
-	ProcessedFiles     int
-	CommentsCreated    int
-	DescriptionUpdated bool
-	Errors             []error
+	Success                bool
+	ProcessedFiles         int
+	CommentsCreated        int
+	DescriptionUpdated     bool
+	ChangesOverviewUpdated bool
+	Errors                 []error
 }

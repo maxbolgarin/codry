@@ -14,7 +14,7 @@ const (
 	endMarker   = "<!-- ai-desc-end -->"
 )
 
-func (s *Reviewer) createDescription(ctx context.Context, request model.ReviewRequest, changes []*model.FileDiff, totalSize int64, log logze.Logger) error {
+func (s *Reviewer) createDescription(ctx context.Context, request model.ReviewRequest, fullDiff string, log logze.Logger) error {
 	if !s.cfg.EnableDescriptionGeneration {
 		log.Info("description generation is disabled, skipping")
 		return nil
@@ -22,19 +22,7 @@ func (s *Reviewer) createDescription(ctx context.Context, request model.ReviewRe
 
 	log.Info("generating description")
 
-	var fullDiff strings.Builder
-	fullDiff.Grow(int(totalSize) + 30)
-	for _, change := range changes {
-		fullDiff.WriteString("--- a/")
-		fullDiff.WriteString(change.OldPath)
-		fullDiff.WriteString("\n+++ b/")
-		fullDiff.WriteString(change.NewPath)
-		fullDiff.WriteString("\n")
-		fullDiff.WriteString(change.Diff)
-		fullDiff.WriteString("\n\n")
-	}
-
-	description, err := s.agent.GenerateDescription(ctx, fullDiff.String())
+	description, err := s.agent.GenerateDescription(ctx, fullDiff)
 	if err != nil {
 		return errm.Wrap(err, "failed to generate description")
 	}
@@ -107,3 +95,4 @@ func (s *Reviewer) updateDescriptionWithAISection(currentDescription, newAIDescr
 
 	return description.String()
 }
+

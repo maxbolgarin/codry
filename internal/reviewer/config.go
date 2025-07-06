@@ -12,9 +12,10 @@ type Config struct {
 	MinFilesForDescription int           `yaml:"min_files_for_description" env:"REVIEW_MIN_FILES_FOR_DESCRIPTION"`
 	ProcessingDelay        time.Duration `yaml:"processing_delay" env:"REVIEW_PROCESSING_DELAY"`
 
-	UpdateDescriptionOnMR       bool `yaml:"update_description_on_mr" env:"REVIEW_UPDATE_DESCRIPTION_ON_MR"`
-	EnableDescriptionGeneration bool `yaml:"enable_description_generation" env:"REVIEW_ENABLE_DESCRIPTION_GENERATION"`
-	EnableCodeReview            bool `yaml:"enable_code_review" env:"REVIEW_ENABLE_CODE_REVIEW"`
+	UpdateDescriptionOnMR           bool `yaml:"update_description_on_mr" env:"REVIEW_UPDATE_DESCRIPTION_ON_MR"`
+	EnableDescriptionGeneration     bool `yaml:"enable_description_generation" env:"REVIEW_ENABLE_DESCRIPTION_GENERATION"`
+	EnableChangesOverviewGeneration bool `yaml:"enable_changes_overview_generation" env:"REVIEW_ENABLE_CHANGES_OVERVIEW_GENERATION"`
+	EnableCodeReview                bool `yaml:"enable_code_review" env:"REVIEW_ENABLE_CODE_REVIEW"`
 
 	Language model.Language `yaml:"language" env:"REVIEW_LANGUAGE"`
 }

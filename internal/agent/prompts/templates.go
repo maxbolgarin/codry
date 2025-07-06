@@ -114,6 +114,18 @@ func (tb *Builder) BuildDescriptionPrompt(diff string) model.Prompt {
 	}
 }
 
+// BuildChangesOverviewPrompt creates a prompt for generating an overview of code changes
+func (tb *Builder) BuildChangesOverviewPrompt(diff string) model.Prompt {
+	systemPrompt := fmt.Sprintf(changesOverviewSystemPromptTemplate, tb.language.Instructions)
+	userPrompt := fmt.Sprintf(changesOverviewUserPromptTemplate, diff)
+
+	return model.Prompt{
+		SystemPrompt: systemPrompt,
+		UserPrompt:   userPrompt,
+		Language:     tb.language.Language,
+	}
+}
+
 // BuildEnhancedStructuredReviewPrompt creates a prompt for structured code review with enhanced context
 func (tb *Builder) BuildEnhancedReviewPrompt(filename string, enhancedCtx *EnhancedContext, cleanDiff string) model.Prompt {
 	systemPrompt := fmt.Sprintf(reviewSystemPromptTemplate, tb.language.Instructions)

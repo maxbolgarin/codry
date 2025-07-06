@@ -2,6 +2,9 @@ package model
 
 import (
 	"time"
+
+	"github.com/maxbolgarin/abstract"
+	"github.com/maxbolgarin/lang"
 )
 
 // ProviderConfig represents provider-specific configuration
@@ -125,6 +128,45 @@ const (
 	ReviewPriorityMedium   ReviewPriority = "medium"
 	ReviewPriorityBacklog  ReviewPriority = "backlog"
 )
+
+// FileChangeType represents the type of change in a file
+type FileChangeType string
+
+const (
+	FileChangeTypeNewFeature FileChangeType = "new_feature"
+	FileChangeTypeBugFix     FileChangeType = "bug_fix"
+	FileChangeTypeRefactor   FileChangeType = "refactor"
+	FileChangeTypeTest       FileChangeType = "test"
+	FileChangeTypeDeploy     FileChangeType = "deploy"
+	FileChangeTypeDocs       FileChangeType = "docs"
+	FileChangeTypeCleanup    FileChangeType = "cleanup"
+	FileChangeTypeStyle      FileChangeType = "style"
+	FileChangeTypeOther      FileChangeType = "other"
+)
+
+var fileChangeTypePriority = abstract.NewSafeMap[FileChangeType, int](map[FileChangeType]int{
+	FileChangeTypeNewFeature: 1,
+	FileChangeTypeBugFix:     2,
+	FileChangeTypeRefactor:   3,
+	FileChangeTypeTest:       4,
+	FileChangeTypeDeploy:     5,
+	FileChangeTypeDocs:       6,
+	FileChangeTypeCleanup:    7,
+	FileChangeTypeStyle:      8,
+	FileChangeTypeOther:      9,
+})
+
+func (fct FileChangeType) Compare(other FileChangeType) int {
+	return lang.If(fct == other, 0, lang.If(fileChangeTypePriority.Get(fct) < fileChangeTypePriority.Get(other), -1, 1))
+}
+
+// FileChange represents a change in a file
+type FileChange struct {
+	FilePath    string         `json:"file"`
+	Diff        string         `json:"diff"`
+	Type        FileChangeType `json:"type"`
+	Description string         `json:"description"`
+}
 
 // FileReviewResult represents the result of a file review
 type FileReviewResult struct {

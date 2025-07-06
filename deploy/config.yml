@@ -125,6 +125,7 @@ review:
   max_files_per_mr: 50
   update_description_on_mr: true
   enable_description_generation: true
+  enable_changes_overview_generation: true
   enable_code_review: true
   min_files_for_description: 3
   processing_delay: 5s 
