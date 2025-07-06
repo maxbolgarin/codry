@@ -36,13 +36,13 @@ FORMATTING REQUIREMENTS:
 `
 
 var descriptionUserPromptTemplate = `
-Analyze the following code changes and generate a structured description using the provided headers.
+Analyze the following code changes and generate a structured description. Use ONLY provided structure, do not add extra headers.
 
 STRUCTURE YOUR RESPONSE IN THESE SECTIONS (only include sections that are relevant):
 
 ## **%s**
 
-*Describe all changes here in 2-3 short sentences in informative way to get the overall picture of the changes.*
+Describe all changes here in 2-3 short sentences in informative way to get the overall picture of the changes.
 
 ### **%s**
 Group related new functionality into logical subcategories. For each major feature or component:
@@ -69,14 +69,12 @@ Group refactoring changes by component or architectural area:
 ### **%s**
 Group testing improvements by type or component:
 
-**Test Category/Component**: List new or updated test suites and describe improved test coverage areas
-- Highlight testing infrastructure improvements
+**Test Category/Component**: List new or updated test suites and describe improved test coverage areas.
 
 ### **%s** 
 Group CI/CD and build improvements:
 
-**CI/CD Area**: Build and deployment improvements and pipeline enhancements and optimizations
-- DevOps and infrastructure changes and automation improvements
+**CI/CD Area**: Build and deployment improvements and pipeline enhancements and optimizations.
 
 ### **%s**
 - Documentation updates and improvements, README and guide enhancements, API docs improvements
@@ -89,11 +87,11 @@ Group CI/CD and build improvements:
 - Miscellaneous improvements and changes, performance optimizations not covered above
 
 FORMATTING REQUIREMENTS:
-- Group related changes under logical subcategories with descriptive h4 headers
-- Use bullet points for specific details under each subcategory
+- Group related changes under logical subcategories
+- Write subcategory description after each subcategory header as showed in above example
+- Use bullet points for another details under each subcategory
 - Only include sections that have actual changes
-- Be specific about WHAT changed, not HOW it was implemented
-- Focus on the impact and benefit of each change
+- Be specific about WHAT changed, not HOW it was implemented, focus on the impact and benefit of each change
 - Do not write very long description, the description should be concise and to the point
 - Do not add any bullet points for every change, only add bullet points for major changes, there should not be a lot of text
 
@@ -104,11 +102,9 @@ SUBCATEGORY NAMING GUIDELINES:
 - Group related functionality together under meaningful categories
 
 GUIDELINES:
-- Maintain the exact header format provided
 - Create logical groupings that make sense to developers and stakeholders
 - Focus on business impact and technical significance
-- Ensure the output is ready for direct use in PR/MR descriptions
-- Make it easy to scan and understand the scope of changes
+- Ensure the output is ready for direct use in PR/MR descriptions, make it easy to scan and understand the scope of changes
 
 Code changes to analyze:
 ---
@@ -146,8 +142,9 @@ LANGUAGE INSTRUCTIONS:
 REVIEW METHODOLOGY:
 1. Analyze full code file to understand the overall context
 2. Analyze code changes line by line for potential issues and how it changes behaviour of the original code
-3. Group related issues into range-based comments with start and end line numbers
-4. Provide clear, actionable feedback for each issue with code snippet that fixes the issue in the best way, you should write workable code that user can copy paste to fix the issue
+3. Focus primarly on critical issues and bugs, do not write about comments, renamings, formatting, etc
+4. For every problematic code section, provide clear, actionable feedback with code snippet 
+5. Code snippet should be a working code that fixes the issue, you should write code that user can copy paste in his IDE without changes to fix the issue 
 `
 
 var structuredReviewUserPromptTemplate = `
@@ -191,10 +188,10 @@ OUTPUT FORMAT: You must respond with a valid JSON object matching this structure
       "issue_type": "critical|bug|performance|security|refactor|other",
       "confidence": "very_high|high|medium|low",
       "severity": "very_high|high|medium|low",
-      "title": "string",
-      "description": "string",
-      "suggestion": "string",
-      "code_snippet": "string",
+      "title": "short and informative description of the issue",
+      "description": "why it is a problem, what is the impact, what is the root cause",
+      "suggestion": "suggestion for improvement, what to do to fix the issue, explain code snippet below",
+      "code_snippet": "code that FIXES the issue and can be copied and pasted to fix the issue, it should be a working code that user can copy paste in his IDE without changing anything else to fix the issue",
     }
   ]
 }
@@ -227,7 +224,7 @@ FIELDS DESCRIPTION:
 - title: short and informative description of the issue
 - description: why it is a problem, what is the impact, what is the root cause
 - suggestion: suggestion for improvement, what to do to fix the issue, explain code snippet below
-- code_snippet: code that FIXES the issue and can be copied and pasted to fix the issue
+- code_snippet: code that FIXES the issue and can be copied and pasted to fix the issue, it should be a working code that user can copy paste in his IDE without changing anything else to fix the issue
 
 IMPORTANT LINE NUMBER MAPPING:
 - Use the exact line numbers shown in the diff
@@ -236,10 +233,10 @@ IMPORTANT LINE NUMBER MAPPING:
 
 VERIFICATION:
 Before submitting your JSON, verify that:
-1. Each line number corresponds to actual code content you're discussing
+1. Each line number in your result corresponds to actual code content you're discussing
 2. You've considered the original file context for broader implications
-3. Your comments focus on significant issues rather than minor style preferences
-4. You have analyzed only real code logical changes, not comments, not empty lines, renamings, etc
+3. You have analyzed only real code logical changes, not comments, not empty lines, renamings, etc
+4. Provided code snippet is a working code that fixes the issue
 
 If no issues are found, return a JSON object with has_issues: false and an empty comments array.
 `

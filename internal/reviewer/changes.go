@@ -210,7 +210,9 @@ func ToComment(language model.Language, lrc *model.ReviewAIComment) *model.Comme
 		comment.WriteString(reviewHeaders.SuggestionHeader)
 		comment.WriteString("\n\n")
 		comment.WriteString(lrc.Suggestion)
-		comment.WriteString("\n\n```diff\n")
+		comment.WriteString("\n\n```")
+		comment.WriteString(lrc.CodeLanguage)
+		comment.WriteString("\n")
 		comment.WriteString(lrc.CodeSnippet)
 		comment.WriteString("\n```\n\n")
 	}
