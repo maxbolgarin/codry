@@ -2,7 +2,6 @@ package reviewer
 
 import (
 	"context"
-	"os"
 	"strings"
 
 	"github.com/maxbolgarin/codry/internal/model"
@@ -98,7 +97,13 @@ func (s *Reviewer) processMergeRequestReview(ctx context.Context, request model.
 		result.ChangesOverviewUpdated = true
 	}
 
-	os.Exit(1)
+	err = s.createArchitectureReview(ctx, request, fullDiff.String(), log)
+	if err != nil {
+		log.Error("failed to generate architecture review", "error", err)
+		result.Errors = append(result.Errors, errm.Wrap(err, "failed to generate architecture review"))
+	} else {
+		result.ArchitectureReviewUpdated = true
+	}
 
 	commentsCreated, err := s.reviewCodeChanges(ctx, request, filesToReview, log)
 	if err != nil {
@@ -173,6 +178,8 @@ func (s *Reviewer) logProcessingResults(result model.ReviewResult, log logze.Log
 			"processed_files", result.ProcessedFiles,
 			"comments_created", result.CommentsCreated,
 			"description_updated", result.DescriptionUpdated,
+			"changes_overview_updated", result.ChangesOverviewUpdated,
+			"architecture_review_updated", result.ArchitectureReviewUpdated,
 		)
 	} else {
 		log.Error("merge request processing completed with errors",

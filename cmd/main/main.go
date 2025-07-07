@@ -41,7 +41,7 @@ func run(ctx contem.Context) error {
 		return errm.Wrap(err, "new provider")
 	}
 
-	codry.RunReview(ctx, "maxbolgarin/bote")
+	codry.RunReview(ctx, "maxbolgarin/gitbasher")
 
 	return nil
 }

@@ -38,10 +38,28 @@ func (r ReviewRequest) String() string {
 
 // ReviewResult represents the result of a code review process
 type ReviewResult struct {
-	Success                bool
-	ProcessedFiles         int
-	CommentsCreated        int
-	DescriptionUpdated     bool
-	ChangesOverviewUpdated bool
-	Errors                 []error
+	Success                   bool
+	ProcessedFiles            int
+	CommentsCreated           int
+	DescriptionUpdated        bool
+	ChangesOverviewUpdated    bool
+	ArchitectureReviewUpdated bool
+	Errors                    []error
+}
+
+// ArchitectureReviewResult represents the result of an architecture review
+type ArchitectureReviewResult struct {
+	GeneralOverview    string                      `json:"general_overview,omitempty"`
+	ArchitectureIssues []ArchitectureReviewFinding `json:"architecture_issues,omitempty"`
+	PerformanceIssues  []ArchitectureReviewFinding `json:"performance_issues,omitempty"`
+	SecurityIssues     []ArchitectureReviewFinding `json:"security_issues,omitempty"`
+	DocumentationNeeds []ArchitectureReviewFinding `json:"documentation_needs,omitempty"`
+}
+
+// ArchitectureReviewFinding represents a single finding from the architecture review
+type ArchitectureReviewFinding struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Impact      string `json:"impact"`
+	Solution    string `json:"solution"`
 }

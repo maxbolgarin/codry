@@ -93,6 +93,94 @@ func (a *Agent) GenerateChangesOverview(ctx context.Context, diff string) ([]mod
 	return result, nil
 }
 
+// GenerateArchitectureReview generates an architecture review for all code changes
+func (a *Agent) GenerateArchitectureReview(ctx context.Context, diff string) (string, error) {
+	return a.apiCall(ctx, a.pb.BuildArchitectureReviewPrompt(diff), false)
+}
+
+// parseArchitectureReviewResponse parses the markdown response from architecture review
+func (a *Agent) parseArchitectureReviewResponse(response string) *model.ArchitectureReviewResult {
+	result := &model.ArchitectureReviewResult{}
+
+	lines := strings.Split(response, "\n")
+	var currentSection string
+	var currentFinding *model.ArchitectureReviewFinding
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Skip empty lines
+		if line == "" {
+			continue
+		}
+
+		// Parse main header (## Architecture review)
+		if strings.HasPrefix(line, "## ") {
+			// Extract general overview from the next non-empty lines until we hit a ###
+			continue
+		}
+
+		// Parse section headers (### Architecture issues, etc.)
+		if strings.HasPrefix(line, "### ") {
+			currentSection = strings.TrimPrefix(line, "### ")
+			currentSection = strings.Trim(currentSection, "*")
+			continue
+		}
+
+		// Parse bullet points with findings
+		if strings.HasPrefix(line, "- **") && strings.Contains(line, "**:") {
+			// Save previous finding if exists
+			if currentFinding != nil {
+				a.addFindingToResult(result, currentSection, *currentFinding)
+			}
+
+			// Start new finding
+			parts := strings.SplitN(line, "**:", 2)
+			if len(parts) == 2 {
+				currentFinding = &model.ArchitectureReviewFinding{
+					Title:       strings.TrimPrefix(parts[0], "- **"),
+					Description: strings.TrimSpace(parts[1]),
+				}
+			}
+			continue
+		}
+
+		// Handle continuation of finding description or general overview
+		if currentFinding == nil && !strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "-") {
+			// This might be general overview content
+			if result.GeneralOverview == "" {
+				result.GeneralOverview = line
+			} else {
+				result.GeneralOverview += " " + line
+			}
+		}
+	}
+
+	// Add the last finding if exists
+	if currentFinding != nil {
+		a.addFindingToResult(result, currentSection, *currentFinding)
+	}
+
+	return result
+}
+
+// addFindingToResult adds a finding to the appropriate section of the result
+func (a *Agent) addFindingToResult(result *model.ArchitectureReviewResult, section string, finding model.ArchitectureReviewFinding) {
+	switch {
+	case strings.Contains(strings.ToLower(section), "architecture"):
+		result.ArchitectureIssues = append(result.ArchitectureIssues, finding)
+	case strings.Contains(strings.ToLower(section), "performance"):
+		result.PerformanceIssues = append(result.PerformanceIssues, finding)
+	case strings.Contains(strings.ToLower(section), "security"):
+		result.SecurityIssues = append(result.SecurityIssues, finding)
+	case strings.Contains(strings.ToLower(section), "documentation"):
+		result.DocumentationNeeds = append(result.DocumentationNeeds, finding)
+	default:
+		// Default to architecture issues if section is unclear
+		result.ArchitectureIssues = append(result.ArchitectureIssues, finding)
+	}
+}
+
 // ReviewCode performs a code review on the given file
 func (a *Agent) ReviewCode(ctx context.Context, filename, fullFileContent, cleanDiff string) (*model.FileReviewResult, error) {
 	prompt := a.pb.BuildReviewPrompt(filename, fullFileContent, cleanDiff)

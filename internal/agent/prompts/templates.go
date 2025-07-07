@@ -126,6 +126,24 @@ func (tb *Builder) BuildChangesOverviewPrompt(diff string) model.Prompt {
 	}
 }
 
+// BuildArchitectureReviewPrompt creates a prompt for architecture review
+func (tb *Builder) BuildArchitectureReviewPrompt(diff string) model.Prompt {
+	systemPrompt := fmt.Sprintf(architectureReviewSystemPromptTemplate, tb.language.Instructions)
+	userPrompt := fmt.Sprintf(architectureReviewUserPromptTemplate,
+		tb.language.ArchitectureReviewHeaders.GeneralHeader,
+		tb.language.ArchitectureReviewHeaders.ArchitectureIssuesHeader,
+		tb.language.ArchitectureReviewHeaders.PerformanceIssuesHeader,
+		tb.language.ArchitectureReviewHeaders.SecurityIssuesHeader,
+		tb.language.ArchitectureReviewHeaders.DocsImprovementHeader,
+		diff)
+
+	return model.Prompt{
+		SystemPrompt: systemPrompt,
+		UserPrompt:   userPrompt,
+		Language:     tb.language.Language,
+	}
+}
+
 // BuildEnhancedStructuredReviewPrompt creates a prompt for structured code review with enhanced context
 func (tb *Builder) BuildEnhancedReviewPrompt(filename string, enhancedCtx *EnhancedContext, cleanDiff string) model.Prompt {
 	systemPrompt := fmt.Sprintf(reviewSystemPromptTemplate, tb.language.Instructions)
