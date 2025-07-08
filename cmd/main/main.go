@@ -3,7 +3,6 @@ package main
 import (
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/maxbolgarin/codry/internal/app"
-	"github.com/maxbolgarin/codry/internal/config"
 	"github.com/maxbolgarin/contem"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/logze/v2"
@@ -30,7 +29,7 @@ func main() {
 }
 
 func run(ctx contem.Context) error {
-	cfg, err := config.Load(*configPath)
+	cfg, err := app.LoadConfig(*configPath)
 	if err != nil {
 		return errm.Wrap(err, "load config")
 	}
@@ -41,7 +40,7 @@ func run(ctx contem.Context) error {
 		return errm.Wrap(err, "new provider")
 	}
 
-	codry.RunReview(ctx, "maxbolgarin/gitbasher")
+	codry.RunReview(ctx, "maxbolgarin/bote")
 
 	return nil
 }

@@ -27,9 +27,9 @@ func NewProvider(cfg Config) (interfaces.CodeProvider, error) {
 
 	switch cfg.Type {
 	case GitLab:
-		provider, err = gitlab.NewProvider(cfgForProvider)
+		provider, err = gitlab.New(cfgForProvider)
 	case GitHub:
-		provider, err = github.NewProvider(cfgForProvider)
+		provider, err = github.New(cfgForProvider)
 	case Bitbucket:
 		provider, err = bitbucket.New(cfgForProvider)
 	default:

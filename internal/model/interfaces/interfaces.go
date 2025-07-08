@@ -13,7 +13,6 @@ type CodeProvider interface {
 	ValidateWebhook(payload []byte, authToken string) error
 	ParseWebhookEvent(payload []byte) (*model.CodeEvent, error)
 	IsMergeRequestEvent(event *model.CodeEvent) bool
-	IsCommentEvent(event *model.CodeEvent) bool
 
 	// MR/PR operations
 	GetMergeRequest(ctx context.Context, projectID string, mrIID int) (*model.MergeRequest, error)
@@ -26,12 +25,6 @@ type CodeProvider interface {
 
 	// Comments
 	CreateComment(ctx context.Context, projectID string, mrIID int, comment *model.Comment) error
-	ReplyToComment(ctx context.Context, projectID string, mrIID int, commentID string, reply string) error
-	GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.Comment, error)
-	GetComment(ctx context.Context, projectID string, mrIID int, commentID string) (*model.Comment, error)
-
-	// User operations
-	GetCurrentUser(ctx context.Context) (*model.User, error)
 
 	// GetFileContent retrieves the content of a file at a specific commit/SHA
 	GetFileContent(ctx context.Context, projectID, filePath, commitSHA string) (string, error)

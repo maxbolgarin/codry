@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -34,12 +33,12 @@ type Provider struct {
 	logger logze.Logger
 }
 
-// NewProvider creates a new GitHub provider
-func NewProvider(config model.ProviderConfig) (*Provider, error) {
+// New creates a new GitHub provider
+func New(config model.ProviderConfig) (*Provider, error) {
 	if config.Token == "" {
 		return nil, errm.New("GitHub token is required")
 	}
-	log := logze.With("provider", "github")
+	log := logze.With("provider", "github", "component", "provider")
 
 	// Create OAuth2 token source
 	ts := oauth2.StaticTokenSource(
@@ -273,15 +272,10 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 
 	// Check if this is a line-specific comment
 	if comment.Type == model.CommentTypeInline && comment.FilePath != "" && comment.Line > 0 {
-		p.logger.Debug("creating positioned comment",
-			"file", comment.FilePath,
-			"line", comment.Line,
-			"type", comment.Type)
 		return p.createPositionedComment(ctx, owner, repo, mrIID, comment)
 	}
 
 	// Create regular issue comment for general comments
-	p.logger.Debug("creating regular comment", "type", comment.Type, "has_file", comment.FilePath != "", "has_line", comment.Line > 0)
 	return p.createRegularComment(ctx, owner, repo, mrIID, comment)
 }
 
@@ -321,11 +315,6 @@ func (p *Provider) createPositionedComment(ctx context.Context, owner, repo stri
 				reviewComment.Line = &endLine
 				reviewComment.Side = &side
 
-				p.logger.Debug("creating GitHub range comment",
-					"file", comment.FilePath,
-					"start_line", startLine,
-					"end_line", endLine,
-					"commit_id", commitID[:8])
 			} else {
 				// Fall back to single line
 				p.setSingleLineComment(reviewComment, comment)
@@ -376,14 +365,9 @@ func (p *Provider) extractLineRange(body string) (int, int) {
 	if len(matches) >= 3 {
 		startLine, _ := strconv.Atoi(matches[1])
 		endLine, _ := strconv.Atoi(matches[2])
-		p.logger.Debug("extracted line range from comment",
-			"start_line", startLine,
-			"end_line", endLine,
-			"pattern_found", true)
 		return startLine, endLine
 	}
 
-	p.logger.Debug("no line range found in comment body", "pattern_found", false)
 	return 0, 0
 }
 
@@ -400,69 +384,6 @@ func (p *Provider) createRegularComment(ctx context.Context, owner, repo string,
 	}
 
 	return nil
-}
-
-// GetComments retrieves all comments for a pull request
-func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.Comment, error) {
-	// Parse owner/repo from projectID
-	parts := strings.Split(projectID, "/")
-	if len(parts) != 2 {
-		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
-	}
-	owner, repo := parts[0], parts[1]
-
-	// Get issue comments (GitHub treats PR comments as issue comments)
-	opts := &github.IssueListCommentsOptions{
-		ListOptions: github.ListOptions{PerPage: 100},
-	}
-
-	var allComments []*github.IssueComment
-	for {
-		comments, resp, err := p.client.Issues.ListComments(ctx, owner, repo, mrIID, opts)
-		if err != nil {
-			return nil, errm.Wrap(err, "failed to list pull request comments")
-		}
-
-		allComments = append(allComments, comments...)
-
-		if resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
-	}
-
-	// Convert to our models
-	var reviewComments []*model.Comment
-	for _, comment := range allComments {
-		reviewComment := &model.Comment{
-			ID:   strconv.FormatInt(comment.GetID(), 10),
-			Body: comment.GetBody(),
-			Author: model.User{
-				ID:       strconv.FormatInt(comment.User.GetID(), 10),
-				Username: comment.User.GetLogin(),
-				Name:     comment.User.GetName(),
-			},
-			CreatedAt: comment.GetCreatedAt().Time,
-			UpdatedAt: comment.GetUpdatedAt().Time,
-		}
-		reviewComments = append(reviewComments, reviewComment)
-	}
-
-	return reviewComments, nil
-}
-
-// GetCurrentUser retrieves information about the current authenticated user
-func (p *Provider) GetCurrentUser(ctx context.Context) (*model.User, error) {
-	user, _, err := p.client.Users.Get(ctx, "")
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to get current user")
-	}
-
-	return &model.User{
-		ID:       strconv.FormatInt(user.GetID(), 10),
-		Username: user.GetLogin(),
-		Name:     user.GetName(),
-	}, nil
 }
 
 // IsMergeRequestEvent determines if a webhook event is a merge request event that should be processed
@@ -485,15 +406,15 @@ func (p *Provider) IsMergeRequestEvent(event *model.CodeEvent) bool {
 	isRelevantAction := slices.Contains(relevantActions, event.Action)
 
 	if !isRelevantAction {
-		p.logger.Debug("ignoring irrelevant action", "action", event.Action)
 		return false
 	}
 
 	// Don't process events from the bot itself to avoid loops
 	if event.User.Username == p.config.BotUsername {
-		p.logger.Debug("ignoring event from bot user")
 		return false
 	}
+
+	// TODO: bad logic
 
 	// Special handling for reviewer-based triggers
 	if event.Action == "review_requested" {
@@ -507,7 +428,6 @@ func (p *Provider) IsMergeRequestEvent(event *model.CodeEvent) bool {
 		}
 
 		if !botIsReviewer {
-			p.logger.Debug("bot not in reviewers list for review_requested action")
 			return false
 		}
 
@@ -517,52 +437,6 @@ func (p *Provider) IsMergeRequestEvent(event *model.CodeEvent) bool {
 
 	p.logger.Debug("pull request event should be processed", "action", event.Action)
 	return true
-}
-
-// IsCommentEvent determines if a webhook event is a comment event that should be processed
-func (p *Provider) IsCommentEvent(event *model.CodeEvent) bool {
-	return event.Type == "issue_comment" || event.Type == "pull_request_review_comment"
-}
-
-// ReplyToComment replies to an existing comment
-func (p *Provider) ReplyToComment(ctx context.Context, projectID string, mrIID int, commentID string, reply string) error {
-	// GitHub doesn't have threaded comments, so we create a new comment with reference
-	comment := &model.Comment{
-		Body: fmt.Sprintf("Reply to comment %s: %s", commentID, reply),
-	}
-	return p.CreateComment(ctx, projectID, mrIID, comment)
-}
-
-// GetComment retrieves a specific comment
-func (p *Provider) GetComment(ctx context.Context, projectID string, mrIID int, commentID string) (*model.Comment, error) {
-	// Parse owner/repo from projectID
-	parts := strings.Split(projectID, "/")
-	if len(parts) != 2 {
-		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
-	}
-	owner, repo := parts[0], parts[1]
-
-	commentIDInt, err := strconv.ParseInt(commentID, 10, 64)
-	if err != nil {
-		return nil, errm.Wrap(err, "invalid comment ID")
-	}
-
-	comment, _, err := p.client.Issues.GetComment(ctx, owner, repo, commentIDInt)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to get comment")
-	}
-
-	return &model.Comment{
-		ID:   strconv.FormatInt(comment.GetID(), 10),
-		Body: comment.GetBody(),
-		Author: model.User{
-			ID:       strconv.FormatInt(comment.User.GetID(), 10),
-			Username: comment.User.GetLogin(),
-			Name:     comment.User.GetName(),
-		},
-		CreatedAt: comment.GetCreatedAt().Time,
-		UpdatedAt: comment.GetUpdatedAt().Time,
-	}, nil
 }
 
 // ListMergeRequests retrieves multiple pull requests based on filter criteria

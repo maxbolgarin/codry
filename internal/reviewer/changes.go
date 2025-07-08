@@ -13,37 +13,46 @@ import (
 	"github.com/maxbolgarin/logze/v2"
 )
 
-// reviewCodeChanges reviews individual files and creates comments
-func (s *Reviewer) reviewCodeChanges(ctx context.Context, request model.ReviewRequest, changes []*model.FileDiff, log logze.Logger) (int, error) {
+func (s *Reviewer) generateCodeReview(ctx context.Context, bundle *reviewBundle) {
 	if !s.cfg.EnableCodeReview {
-		log.Info("code review is disabled, skipping")
-		return 0, nil
+		bundle.log.InfoIf(s.cfg.Verbose, "code review is disabled, skipping")
+		return
+	}
+	bundle.log.DebugIf(s.cfg.Verbose, "generating code review")
+
+	commentsCreated, err := s.reviewCodeChanges(ctx, bundle.request, bundle.filesToReview, bundle.log)
+	if err != nil {
+		msg := "failed to generate code review"
+		bundle.log.Error(msg, "error", err)
+		bundle.result.Errors = append(bundle.result.Errors, errm.Wrap(err, msg))
+		return
 	}
 
-	log.Info("reviewing code changes with context analysis")
+	bundle.log.InfoIf(s.cfg.Verbose, "finished code review")
+
+	bundle.result.CommentsCreated = commentsCreated
+	bundle.result.IsCodeReviewCreated = true
+}
+
+// reviewCodeChanges reviews individual files and creates comments
+func (s *Reviewer) reviewCodeChanges(ctx context.Context, request model.ReviewRequest, changes []*model.FileDiff, log logze.Logger) (int, error) {
+
 	commentsCreated := 0
 
 	errs := errm.NewList()
 	for _, change := range changes {
+		// Guard old path
 		change.OldPath = lang.Check(change.OldPath, change.NewPath)
 
 		fileHash := s.getFileHash(change.Diff)
 		if oldHash, ok := s.processedMRs.Lookup(request.String(), change.NewPath); ok {
 			if oldHash == fileHash {
-				log.Debug("skipping already reviewed", "file", change.NewPath)
+				log.DebugIf(s.cfg.Verbose, "skipping already reviewed", "file", change.NewPath)
 				continue
 			}
 		}
 
-		log.Debug("performing review", "file", change.NewPath)
-
-		// reviewResult, err := s.performBasicReview(ctx, request, change, log)
-		// if err != nil {
-		// 	errs.Wrap(err, "failed to perform basic review", "file", change.NewPath)
-		// 	continue
-		// }
-		// commentsCreated += s.processReviewResults(ctx, request, change, reviewResult, log)
-		// continue
+		log.DebugIf(s.cfg.Verbose, "performing review", "file", change.NewPath)
 
 		// Gather enhanced context for the file
 		enhancedCtx, err := s.contextGatherer.GatherEnhancedContext(ctx, request, change)

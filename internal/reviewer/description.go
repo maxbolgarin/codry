@@ -6,22 +6,28 @@ import (
 
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/errm"
-	"github.com/maxbolgarin/logze/v2"
 )
 
-const (
-	startMarker = "<!-- ai-desc-start -->"
-	endMarker   = "<!-- ai-desc-end -->"
-)
-
-func (s *Reviewer) createDescription(ctx context.Context, request model.ReviewRequest, fullDiff string, log logze.Logger) error {
+func (s *Reviewer) generateDescription(ctx context.Context, bundle *reviewBundle) {
 	if !s.cfg.EnableDescriptionGeneration {
-		log.Info("description generation is disabled, skipping")
-		return nil
+		bundle.log.InfoIf(s.cfg.Verbose, "description generation is disabled, skipping")
+		return
+	}
+	bundle.log.DebugIf(s.cfg.Verbose, "generating description")
+
+	if err := s.createDescription(ctx, bundle.request, bundle.fullDiffString); err != nil {
+		msg := "failed to generate description"
+		bundle.log.Error(msg, "error", err)
+		bundle.result.Errors = append(bundle.result.Errors, errm.Wrap(err, msg))
+		return
 	}
 
-	log.Info("generating description")
+	bundle.log.InfoIf(s.cfg.Verbose, "generated and updated description")
 
+	bundle.result.IsDescriptionCreated = true
+}
+
+func (s *Reviewer) createDescription(ctx context.Context, request model.ReviewRequest, fullDiff string) error {
 	description, err := s.agent.GenerateDescription(ctx, fullDiff)
 	if err != nil {
 		return errm.Wrap(err, "failed to generate description")
@@ -39,10 +45,13 @@ func (s *Reviewer) createDescription(ctx context.Context, request model.ReviewRe
 		return errm.Wrap(err, "failed to update MR description")
 	}
 
-	log.Info("description created and updated")
-
 	return nil
 }
+
+const (
+	startMarker = "<!-- ai-desc-start -->"
+	endMarker   = "<!-- ai-desc-end -->"
+)
 
 // updateDescriptionWithAISection updates MR description with AI section
 func (s *Reviewer) updateDescriptionWithAISection(currentDescription, newAIDescription string) string {
@@ -95,4 +104,3 @@ func (s *Reviewer) updateDescriptionWithAISection(currentDescription, newAIDescr
 
 	return description.String()
 }
-

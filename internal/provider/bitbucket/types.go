@@ -80,31 +80,3 @@ type bitbucketPayload struct {
 	Approval    json.RawMessage      `json:"approval,omitempty"` // For approval events
 	Comment     json.RawMessage      `json:"comment,omitempty"`  // For comment events
 }
-
-type bitbucketCommentsResponse struct {
-	Values []struct {
-		ID      int `json:"id"`
-		Content struct {
-			Raw string `json:"raw"`
-		} `json:"content"`
-		User   bitbucketUser `json:"user"`
-		Inline struct {
-			Path string `json:"path"`
-			To   int    `json:"to"`
-		} `json:"inline"`
-	} `json:"values"`
-}
-
-type bitbucketCommentResponse struct {
-	ID      int `json:"id"`
-	Content struct {
-		Raw string `json:"raw"`
-	} `json:"content"`
-	User      bitbucketUser `json:"user"`
-	CreatedOn string        `json:"created_on"`
-	UpdatedOn string        `json:"updated_on"`
-	Inline    struct {
-		Path string `json:"path"`
-		To   int    `json:"to"`
-	} `json:"inline"`
-}

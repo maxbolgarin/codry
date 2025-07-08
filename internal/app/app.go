@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/maxbolgarin/codry/internal/agent"
-	"github.com/maxbolgarin/codry/internal/config"
 	"github.com/maxbolgarin/codry/internal/provider"
 	"github.com/maxbolgarin/codry/internal/reviewer"
 	"github.com/maxbolgarin/codry/internal/server"
@@ -19,12 +18,12 @@ type Codry struct {
 	webhookHandler *server.Server
 	fetcher        *provider.Fetcher
 
-	cfg config.Config
+	cfg Config
 	log logze.Logger
 }
 
 // New creates a new code review service
-func New(ctx contem.Context, cfg config.Config) (*Codry, error) {
+func New(ctx contem.Context, cfg Config) (*Codry, error) {
 	service := &Codry{
 		cfg: cfg,
 		log: logze.With("component", "app"),
@@ -58,7 +57,7 @@ func (s *Codry) RunReview(ctx context.Context, projectID string) error {
 	return nil
 }
 
-func (s *Codry) init(ctx contem.Context, cfg config.Config) (err error) {
+func (s *Codry) init(ctx contem.Context, cfg Config) (err error) {
 
 	// Create VCS provider
 	codeProvider, err := provider.NewProvider(cfg.Provider)

@@ -38,7 +38,7 @@ func New(config model.ProviderConfig) (*Provider, error) {
 	if config.Token == "" {
 		return nil, errm.New("Bitbucket token is required")
 	}
-	log := logze.With("provider", "bitbucket")
+	log := logze.With("provider", "bitbucket", "component", "provider")
 
 	// Set base URL
 	baseURL := defaultBaseURL
@@ -279,11 +279,6 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 				// Bitbucket supports range comments with from/to
 				inlineData["from"] = startLine
 				inlineData["to"] = endLine
-
-				p.logger.Debug("creating Bitbucket range comment",
-					"file", comment.FilePath,
-					"start_line", startLine,
-					"end_line", endLine)
 			}
 		}
 
@@ -316,61 +311,6 @@ func (p *Provider) extractLineRange(body string) (int, int) {
 	}
 
 	return 0, 0
-}
-
-// GetComments retrieves comments from a pull request
-func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.Comment, error) {
-	// Parse workspace/repo_slug from projectID
-	parts := strings.Split(projectID, "/")
-	if len(parts) != 2 {
-		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
-	}
-	workspace, repoSlug := parts[0], parts[1]
-
-	// Build API URL
-	apiURL := fmt.Sprintf("repositories/%s/%s/pullrequests/%d/comments", workspace, repoSlug, mrIID)
-
-	var response bitbucketCommentsResponse
-	_, err := p.client.Get(ctx, apiURL, &response)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to get comments from Bitbucket")
-	}
-
-	var comments []*model.Comment
-	for _, comment := range response.Values {
-		reviewComment := &model.Comment{
-			ID:       strconv.Itoa(comment.ID),
-			Body:     comment.Content.Raw,
-			FilePath: comment.Inline.Path,
-			Line:     comment.Inline.To,
-			Author: model.User{
-				ID:       comment.User.UUID,
-				Username: comment.User.Username,
-				Name:     comment.User.DisplayName,
-			},
-		}
-		comments = append(comments, reviewComment)
-	}
-
-	return comments, nil
-}
-
-// GetCurrentUser retrieves the current authenticated user
-func (p *Provider) GetCurrentUser(ctx context.Context) (*model.User, error) {
-	// Build API URL
-	apiURL := "user"
-
-	var user bitbucketUser
-	_, err := p.client.Get(ctx, apiURL, &user)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to get current user from Bitbucket")
-	}
-
-	return &model.User{
-		ID:       user.UUID,
-		Username: user.Username,
-		Name:     user.DisplayName,
-	}, nil
 }
 
 // parseDiffContent parses unified diff content into FileDiff objects
@@ -449,7 +389,6 @@ func (p *Provider) parseDiffContent(diffContent string) []*model.FileDiff {
 func (p *Provider) IsMergeRequestEvent(event *model.CodeEvent) bool {
 	// Only process pull request events (Bitbucket calls them pullrequest)
 	if event.Type != "pullrequest" {
-		p.logger.Debug("ignoring non-pull request event", "event_type", event.Type)
 		return false
 	}
 
@@ -464,15 +403,15 @@ func (p *Provider) IsMergeRequestEvent(event *model.CodeEvent) bool {
 	isRelevantAction := slices.Contains(relevantActions, event.Action)
 
 	if !isRelevantAction {
-		p.logger.Debug("ignoring irrelevant action", "action", event.Action)
 		return false
 	}
 
 	// Don't process events from the bot itself to avoid loops
 	if event.User.Username == p.config.BotUsername {
-		p.logger.Debug("ignoring event from bot user")
 		return false
 	}
+
+	// TODO: bad logic
 
 	// Special handling for reviewer-based triggers
 	if event.Action == "reviewer_added" {
@@ -486,11 +425,9 @@ func (p *Provider) IsMergeRequestEvent(event *model.CodeEvent) bool {
 		}
 
 		if !botIsReviewer {
-			p.logger.Debug("bot not in reviewers list for reviewer_added action")
 			return false
 		}
 
-		p.logger.Info("bot was added as reviewer, triggering review")
 		return true
 	}
 
@@ -502,57 +439,6 @@ func (p *Provider) IsMergeRequestEvent(event *model.CodeEvent) bool {
 
 	p.logger.Debug("pull request event should be processed", "action", event.Action)
 	return true
-}
-
-// IsCommentEvent determines if a webhook event is a comment event that should be processed
-func (p *Provider) IsCommentEvent(event *model.CodeEvent) bool {
-	return event.Type == "comment" || event.Type == "pullrequest:comment_created"
-}
-
-// ReplyToComment replies to an existing comment
-func (p *Provider) ReplyToComment(ctx context.Context, projectID string, mrIID int, commentID string, reply string) error {
-	// Bitbucket doesn't have threaded comments, so we create a new comment with reference
-	comment := &model.Comment{
-		Body: fmt.Sprintf("Reply to comment %s: %s", commentID, reply),
-	}
-	return p.CreateComment(ctx, projectID, mrIID, comment)
-}
-
-// GetComment retrieves a specific comment
-func (p *Provider) GetComment(ctx context.Context, projectID string, mrIID int, commentID string) (*model.Comment, error) {
-	// Parse workspace/repo_slug from projectID
-	parts := strings.Split(projectID, "/")
-	if len(parts) != 2 {
-		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
-	}
-	workspace, repoSlug := parts[0], parts[1]
-
-	// Build API URL for specific comment
-	apiURL := fmt.Sprintf("repositories/%s/%s/pullrequests/%d/comments/%s", workspace, repoSlug, mrIID, commentID)
-
-	var comment bitbucketCommentResponse
-	_, err := p.client.Get(ctx, apiURL, &comment)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to get comment")
-	}
-
-	// Parse timestamps
-	createdAt, _ := time.Parse(time.RFC3339, comment.CreatedOn)
-	updatedAt, _ := time.Parse(time.RFC3339, comment.UpdatedOn)
-
-	return &model.Comment{
-		ID:   strconv.Itoa(comment.ID),
-		Body: comment.Content.Raw,
-		Author: model.User{
-			ID:       comment.User.UUID,
-			Username: comment.User.Username,
-			Name:     comment.User.DisplayName,
-		},
-		FilePath:  comment.Inline.Path,
-		Line:      comment.Inline.To,
-		CreatedAt: createdAt,
-		UpdatedAt: updatedAt,
-	}, nil
 }
 
 // ListMergeRequests retrieves multiple pull requests based on filter criteria

@@ -2,10 +2,11 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
+
 	"fmt"
 	"strings"
 
+	jsoniter "github.com/json-iterator/go"
 	"github.com/maxbolgarin/cliex"
 	"github.com/maxbolgarin/codry/internal/agent/claude"
 	"github.com/maxbolgarin/codry/internal/agent/gemini"
@@ -18,11 +19,13 @@ import (
 	"github.com/maxbolgarin/logze/v2"
 )
 
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
+
 type Agent struct {
-	cfg    Config
-	logger logze.Logger
-	pb     *prompts.Builder
-	api    interfaces.AgentAPI
+	cfg Config
+	log logze.Logger
+	pb  *prompts.Builder
+	api interfaces.AgentAPI
 }
 
 func New(ctx context.Context, cfg Config) (*Agent, error) {
@@ -40,9 +43,9 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 	}
 
 	agent := &Agent{
-		cfg:    cfg,
-		logger: logze.Default(),
-		pb:     prompts.NewBuilder(cfg.Language),
+		cfg: cfg,
+		log: logze.With("llm", cfg.Type, "component", "agent"),
+		pb:  prompts.NewBuilder(cfg.Language),
 	}
 
 	modelCfg := model.ModelConfig{
@@ -72,19 +75,36 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 
 // GenerateDescription generates a description for code changes
 func (a *Agent) GenerateDescription(ctx context.Context, diff string) (string, error) {
-	return a.apiCall(ctx, a.pb.BuildDescriptionPrompt(diff), false)
+	response, err := a.apiCall(ctx, a.pb.BuildDescriptionPrompt(diff), false)
+	if err != nil {
+		return "", errm.Wrap(err, "failed to call API for description")
+	}
+
+	a.log.Debug("description generated",
+		"input_tokens", response.PromptTokens,
+		"output_tokens", response.CompletionTokens,
+		"total_tokens", response.TotalTokens,
+	)
+
+	return response.Content, nil
 }
 
 // GenerateChangesOverview generates an overview of code changes§
-func (a *Agent) GenerateChangesOverview(ctx context.Context, diff string) ([]model.FileChange, error) {
+func (a *Agent) GenerateChangesOverview(ctx context.Context, diff string) ([]model.FileChangeInfo, error) {
 	prompt := a.pb.BuildChangesOverviewPrompt(diff)
 	response, err := a.apiCall(ctx, prompt, true)
 	if err != nil {
 		return nil, errm.Wrap(err, "failed to call API for changes overview")
 	}
 
-	var result []model.FileChange
-	err = json.Unmarshal([]byte(response), &result)
+	a.log.Debug("changes overview generated",
+		"input_tokens", response.PromptTokens,
+		"output_tokens", response.CompletionTokens,
+		"total_tokens", response.TotalTokens,
+	)
+
+	var result []model.FileChangeInfo
+	err = json.Unmarshal([]byte(response.Content), &result)
 	if err != nil {
 		fmt.Println(response)
 		return nil, errm.Wrap(err, "failed to parse changes overview response as JSON")
@@ -95,90 +115,18 @@ func (a *Agent) GenerateChangesOverview(ctx context.Context, diff string) ([]mod
 
 // GenerateArchitectureReview generates an architecture review for all code changes
 func (a *Agent) GenerateArchitectureReview(ctx context.Context, diff string) (string, error) {
-	return a.apiCall(ctx, a.pb.BuildArchitectureReviewPrompt(diff), false)
-}
-
-// parseArchitectureReviewResponse parses the markdown response from architecture review
-func (a *Agent) parseArchitectureReviewResponse(response string) *model.ArchitectureReviewResult {
-	result := &model.ArchitectureReviewResult{}
-
-	lines := strings.Split(response, "\n")
-	var currentSection string
-	var currentFinding *model.ArchitectureReviewFinding
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-
-		// Skip empty lines
-		if line == "" {
-			continue
-		}
-
-		// Parse main header (## Architecture review)
-		if strings.HasPrefix(line, "## ") {
-			// Extract general overview from the next non-empty lines until we hit a ###
-			continue
-		}
-
-		// Parse section headers (### Architecture issues, etc.)
-		if strings.HasPrefix(line, "### ") {
-			currentSection = strings.TrimPrefix(line, "### ")
-			currentSection = strings.Trim(currentSection, "*")
-			continue
-		}
-
-		// Parse bullet points with findings
-		if strings.HasPrefix(line, "- **") && strings.Contains(line, "**:") {
-			// Save previous finding if exists
-			if currentFinding != nil {
-				a.addFindingToResult(result, currentSection, *currentFinding)
-			}
-
-			// Start new finding
-			parts := strings.SplitN(line, "**:", 2)
-			if len(parts) == 2 {
-				currentFinding = &model.ArchitectureReviewFinding{
-					Title:       strings.TrimPrefix(parts[0], "- **"),
-					Description: strings.TrimSpace(parts[1]),
-				}
-			}
-			continue
-		}
-
-		// Handle continuation of finding description or general overview
-		if currentFinding == nil && !strings.HasPrefix(line, "#") && !strings.HasPrefix(line, "-") {
-			// This might be general overview content
-			if result.GeneralOverview == "" {
-				result.GeneralOverview = line
-			} else {
-				result.GeneralOverview += " " + line
-			}
-		}
+	response, err := a.apiCall(ctx, a.pb.BuildArchitectureReviewPrompt(diff), false)
+	if err != nil {
+		return "", errm.Wrap(err, "failed to call API for architecture review")
 	}
 
-	// Add the last finding if exists
-	if currentFinding != nil {
-		a.addFindingToResult(result, currentSection, *currentFinding)
-	}
+	a.log.Debug("architecture review generated",
+		"input_tokens", response.PromptTokens,
+		"output_tokens", response.CompletionTokens,
+		"total_tokens", response.TotalTokens,
+	)
 
-	return result
-}
-
-// addFindingToResult adds a finding to the appropriate section of the result
-func (a *Agent) addFindingToResult(result *model.ArchitectureReviewResult, section string, finding model.ArchitectureReviewFinding) {
-	switch {
-	case strings.Contains(strings.ToLower(section), "architecture"):
-		result.ArchitectureIssues = append(result.ArchitectureIssues, finding)
-	case strings.Contains(strings.ToLower(section), "performance"):
-		result.PerformanceIssues = append(result.PerformanceIssues, finding)
-	case strings.Contains(strings.ToLower(section), "security"):
-		result.SecurityIssues = append(result.SecurityIssues, finding)
-	case strings.Contains(strings.ToLower(section), "documentation"):
-		result.DocumentationNeeds = append(result.DocumentationNeeds, finding)
-	default:
-		// Default to architecture issues if section is unclear
-		result.ArchitectureIssues = append(result.ArchitectureIssues, finding)
-	}
+	return response.Content, nil
 }
 
 // ReviewCode performs a code review on the given file
@@ -189,13 +137,20 @@ func (a *Agent) ReviewCode(ctx context.Context, filename, fullFileContent, clean
 		return nil, errm.Wrap(err, "failed to call API for enhanced structured review")
 	}
 
-	result, err := unmarshal[model.FileReviewResult](response)
+	a.log.Debug("simple code review generated",
+		"input_tokens", response.PromptTokens,
+		"output_tokens", response.CompletionTokens,
+		"total_tokens", response.TotalTokens,
+		"filename", filename,
+	)
+
+	result, err := unmarshal[model.FileReviewResult](response.Content)
 	if err != nil {
 		fmt.Println(response)
 		return nil, errm.Wrap(err, "failed to parse enhanced structured review response as JSON")
 	}
 
-	result.FilePath = filename
+	result.File = filename
 
 	return &result, nil
 }
@@ -208,18 +163,25 @@ func (a *Agent) ReviewCodeWithContext(ctx context.Context, filename string, enha
 		return nil, errm.Wrap(err, "failed to call API for enhanced context review")
 	}
 
-	result, err := unmarshal[model.FileReviewResult](response)
+	a.log.Debug("enhanced code review generated",
+		"input_tokens", response.PromptTokens,
+		"output_tokens", response.CompletionTokens,
+		"total_tokens", response.TotalTokens,
+		"filename", filename,
+	)
+
+	result, err := unmarshal[model.FileReviewResult](response.Content)
 	if err != nil {
 		fmt.Println(response)
 		return nil, errm.Wrap(err, "failed to parse enhanced context review response as JSON")
 	}
 
-	result.FilePath = filename
+	result.File = filename
 
 	return &result, nil
 }
 
-func (a *Agent) apiCall(ctx context.Context, prompt model.Prompt, isJSON bool) (string, error) {
+func (a *Agent) apiCall(ctx context.Context, prompt model.Prompt, isJSON bool) (model.APIResponse, error) {
 	response, err := a.api.CallAPI(ctx, model.APIRequest{
 		Prompt:       prompt.UserPrompt,
 		SystemPrompt: prompt.SystemPrompt,
@@ -228,14 +190,14 @@ func (a *Agent) apiCall(ctx context.Context, prompt model.Prompt, isJSON bool) (
 		ResponseType: lang.If(isJSON, "application/json", "text/plain"),
 	})
 	if err != nil {
-		return "", errm.Wrap(err, "failed to call API")
+		return model.APIResponse{}, errm.Wrap(err, "failed to call API")
 	}
 
 	if response.Content == "" {
-		return "", errm.New("empty response from API")
+		return model.APIResponse{}, errm.New("empty response from API")
 	}
 
-	return response.Content, nil
+	return response, nil
 }
 
 func unmarshal[T any](response string) (T, error) {

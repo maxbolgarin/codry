@@ -19,6 +19,7 @@ type Config struct {
 	EnableCodeReview                bool `yaml:"enable_code_review" env:"REVIEW_ENABLE_CODE_REVIEW"`
 
 	Language model.Language `yaml:"language" env:"REVIEW_LANGUAGE"`
+	Verbose  bool           `yaml:"verbose" env:"REVIEW_VERBOSE"`
 }
 
 // FileFilter represents criteria for filtering files to review

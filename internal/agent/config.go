@@ -11,11 +11,11 @@ import (
 
 const (
 	defaultTemperature = 0.5
-	defaultMaxTokens   = 100000
+	defaultMaxTokens   = 10000
 	defaultTimeout     = 30 * time.Second
 	defaultMaxRetries  = 5
 	defaultRetryDelay  = 5 * time.Second
-	defaultUserAgent   = "codry/0.1.0 (github.com/maxbolgarin/codry)"
+	defaultUserAgent   = "codry/0.1.0 (https://github.com/maxbolgarin/codry)"
 )
 
 // AgentType represents the type of AI agent
@@ -50,20 +50,19 @@ type Config struct {
 }
 
 func (c *Config) PrepareAndValidate() error {
+	if c.APIKey == "" {
+		return errm.New("api key is required")
+	}
+	if c.Type == "" || !slices.Contains(supportedAgentTypes, c.Type) {
+		return errm.New("invalid agent type: %s", c.Type)
+	}
+
 	c.Temperature = lang.Check(c.Temperature, defaultTemperature)
 	c.MaxTokens = lang.Check(c.MaxTokens, defaultMaxTokens)
 	c.Timeout = lang.Check(c.Timeout, defaultTimeout)
 	c.MaxRetries = lang.Check(c.MaxRetries, defaultMaxRetries)
 	c.RetryDelay = lang.Check(c.RetryDelay, defaultRetryDelay)
 	c.UserAgent = lang.Check(c.UserAgent, defaultUserAgent)
-
-	if c.Type == "" || !slices.Contains(supportedAgentTypes, c.Type) {
-		return errm.New("invalid agent type: %s", c.Type)
-	}
-
-	if c.APIKey == "" {
-		return errm.New("api key is required")
-	}
 
 	return nil
 }

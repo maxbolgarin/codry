@@ -10,56 +10,29 @@ import (
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/lang"
-	"github.com/maxbolgarin/logze/v2"
 )
 
-// DiffStats represents the statistics of a diff
-type DiffStats struct {
-	PlusLines  int
-	MinusLines int
-}
-
-// countDiffLines counts the plus and minus lines in a diff string
-func countDiffLines(diff string) DiffStats {
-	stats := DiffStats{}
-
-	lines := strings.Split(diff, "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
-			stats.PlusLines++
-		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
-			stats.MinusLines++
-		}
-	}
-
-	return stats
-}
-
-// formatDiffStats formats the diff statistics for display
-func formatDiffStats(stats DiffStats) string {
-	if stats.PlusLines == 0 && stats.MinusLines == 0 {
-		return "No changes"
-	}
-
-	var parts []string
-	if stats.PlusLines > 0 {
-		parts = append(parts, fmt.Sprintf("+%d", stats.PlusLines))
-	}
-	if stats.MinusLines > 0 {
-		parts = append(parts, fmt.Sprintf("-%d", stats.MinusLines))
-	}
-
-	return strings.Join(parts, " ")
-}
-
-func (s *Reviewer) createChangesOverview(ctx context.Context, request model.ReviewRequest, fullDiff string, log logze.Logger) error {
+func (s *Reviewer) generateChangesOverview(ctx context.Context, bundle *reviewBundle) {
 	if !s.cfg.EnableChangesOverviewGeneration {
-		log.Info("changes overview generation is disabled, skipping")
-		return nil
+		bundle.log.InfoIf(s.cfg.Verbose, "changes overview generation is disabled, skipping")
+		return
+	}
+	bundle.log.DebugIf(s.cfg.Verbose, "generating changes overview")
+
+	err := s.createChangesOverview(ctx, bundle.request, bundle.fullDiffString)
+	if err != nil {
+		msg := "failed to generate changes overview"
+		bundle.log.Error(msg, "error", err)
+		bundle.result.Errors = append(bundle.result.Errors, errm.Wrap(err, msg))
+		return
 	}
 
-	log.Info("generating changes overview")
+	bundle.log.InfoIf(s.cfg.Verbose, "generated and created changes overview comment")
 
+	bundle.result.IsChangesOverviewCreated = true
+}
+
+func (s *Reviewer) createChangesOverview(ctx context.Context, request model.ReviewRequest, fullDiff string) error {
 	changes, err := s.agent.GenerateChangesOverview(ctx, fullDiff)
 	if err != nil {
 		return errm.Wrap(err, "failed to generate changes overview")
@@ -71,18 +44,16 @@ func (s *Reviewer) createChangesOverview(ctx context.Context, request model.Revi
 	// Update MR description
 	err = s.provider.CreateComment(ctx, request.ProjectID, request.MergeRequest.IID, newComment)
 	if err != nil {
-		return errm.Wrap(err, "failed to update MR description")
+		return errm.Wrap(err, "failed to create comment")
 	}
-
-	log.Info("changes overview created and updated")
 
 	return nil
 }
 
-func (s *Reviewer) createCommentWithChangesOverview(files []model.FileChange, changes []*model.FileDiff) *model.Comment {
+func (s *Reviewer) createCommentWithChangesOverview(files []model.FileChangeInfo, changes []*model.FileDiff) *model.Comment {
 	reviewHeaders := prompts.DefaultLanguages[s.cfg.Language].ListOfChangesHeaders
 
-	slices.SortFunc(files, func(a, b model.FileChange) int {
+	slices.SortFunc(files, func(a, b model.FileChangeInfo) int {
 		return a.Type.Compare(b.Type)
 	})
 
@@ -120,4 +91,43 @@ func (s *Reviewer) createCommentWithChangesOverview(files []model.FileChange, ch
 		Body: body,
 		Type: model.CommentTypeGeneral,
 	}
+}
+
+// diffStats represents the statistics of a diff
+type diffStats struct {
+	plusLines  int
+	minusLines int
+}
+
+// countDiffLines counts the plus and minus lines in a diff string
+func countDiffLines(diff string) diffStats {
+	stats := diffStats{}
+
+	lines := strings.Split(diff, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			stats.plusLines++
+		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+			stats.minusLines++
+		}
+	}
+
+	return stats
+}
+
+// formatDiffStats formats the diff statistics for display
+func formatDiffStats(stats diffStats) string {
+	if stats.plusLines == 0 && stats.minusLines == 0 {
+		return "No changes"
+	}
+
+	var parts []string
+	if stats.plusLines > 0 {
+		parts = append(parts, fmt.Sprintf("+%d", stats.plusLines))
+	}
+	if stats.minusLines > 0 {
+		parts = append(parts, fmt.Sprintf("-%d", stats.minusLines))
+	}
+
+	return strings.Join(parts, " ")
 }

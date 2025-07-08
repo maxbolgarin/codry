@@ -32,12 +32,12 @@ type Provider struct {
 	logger logze.Logger
 }
 
-// NewProvider creates a new GitLab provider
-func NewProvider(config model.ProviderConfig) (*Provider, error) {
+// New creates a new GitLab provider
+func New(config model.ProviderConfig) (*Provider, error) {
 	if config.Token == "" {
 		return nil, errm.New("GitLab token is required")
 	}
-	logger := logze.With("provider", "gitlab")
+	logger := logze.With("provider", "gitlab", "component", "provider")
 
 	baseURL := config.BaseURL
 	if baseURL == "" {
@@ -253,11 +253,6 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 				// GitLab doesn't have native range comments, but we can use the start line
 				// and include range information in the comment body
 				positionOpts.NewLine = &startLine
-
-				p.logger.Debug("creating GitLab range comment",
-					"file", comment.FilePath,
-					"start_line", startLine,
-					"end_line", endLine)
 			}
 		}
 
@@ -268,9 +263,7 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 
 		discussion, _, err := p.client.Discussions.CreateMergeRequestDiscussion(projectIDInt, mrIID, discussionOpts)
 		if err != nil {
-			// If positioned comment fails, fall back to regular comment
-			p.logger.Warn("failed to create positioned comment, falling back to regular comment", "error", err)
-			return p.createRegularComment(ctx, projectIDInt, mrIID, comment)
+			return errm.Wrap(err, "failed to create merge request discussion")
 		}
 
 		comment.ID = discussion.ID
@@ -278,11 +271,11 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 	}
 
 	// Create regular discussion for general comments
-	return p.createRegularComment(ctx, projectIDInt, mrIID, comment)
+	return p.createRegularComment(projectIDInt, mrIID, comment)
 }
 
 // createRegularComment creates a regular (non-positioned) discussion
-func (p *Provider) createRegularComment(ctx context.Context, projectID int, mrIID int, comment *model.Comment) error {
+func (p *Provider) createRegularComment(projectID int, mrIID int, comment *model.Comment) error {
 	discussionOpts := &gitlab.CreateMergeRequestDiscussionOptions{
 		Body: &comment.Body,
 	}
@@ -294,117 +287,6 @@ func (p *Provider) createRegularComment(ctx context.Context, projectID int, mrII
 
 	comment.ID = discussion.ID
 	return nil
-}
-
-// GetComments retrieves all comments/discussions for a merge request
-func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.Comment, error) {
-	projectIDInt, err := strconv.Atoi(projectID)
-	if err != nil {
-		return nil, errm.Wrap(err, "invalid project ID")
-	}
-
-	discussions, _, err := p.client.Discussions.ListMergeRequestDiscussions(projectIDInt, mrIID, nil)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to list merge request discussions")
-	}
-
-	var comments []*model.Comment
-	for _, discussion := range discussions {
-		for _, note := range discussion.Notes {
-			comment := &model.Comment{
-				ID:   strconv.Itoa(note.ID),
-				Body: note.Body,
-				Author: model.User{
-					ID:       strconv.Itoa(note.Author.ID),
-					Username: note.Author.Username,
-					Name:     note.Author.Name,
-				},
-			}
-			comments = append(comments, comment)
-		}
-	}
-
-	return comments, nil
-}
-
-// GetCurrentUser retrieves information about the current authenticated user
-func (p *Provider) GetCurrentUser(ctx context.Context) (*model.User, error) {
-	user, _, err := p.client.Users.CurrentUser()
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to get current user")
-	}
-
-	return &model.User{
-		ID:       strconv.Itoa(user.ID),
-		Username: user.Username,
-		Name:     user.Name,
-	}, nil
-}
-
-// IsCommentEvent determines if a webhook event is a comment event that should be processed
-func (p *Provider) IsCommentEvent(event *model.CodeEvent) bool {
-	return event.Type == "note" || event.Type == "comment"
-}
-
-// ReplyToComment replies to an existing comment
-func (p *Provider) ReplyToComment(ctx context.Context, projectID string, mrIID int, commentID string, reply string) error {
-	// For now, create a new discussion as a reply
-	// TODO: Implement proper thread replies when GitLab client supports it
-	comment := &model.Comment{
-		Body: fmt.Sprintf("Reply to comment %s: %s", commentID, reply),
-	}
-	return p.CreateComment(ctx, projectID, mrIID, comment)
-}
-
-// GetComment retrieves a specific comment
-func (p *Provider) GetComment(ctx context.Context, projectID string, mrIID int, commentID string) (*model.Comment, error) {
-	projectIDInt, err := strconv.Atoi(projectID)
-	if err != nil {
-		return nil, errm.Wrap(err, "invalid project ID")
-	}
-
-	// Get all discussions and find the specific comment
-	discussions, _, err := p.client.Discussions.ListMergeRequestDiscussions(projectIDInt, mrIID, nil)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to list discussions")
-	}
-
-	for _, discussion := range discussions {
-		if discussion.ID == commentID {
-			if len(discussion.Notes) > 0 {
-				note := discussion.Notes[0]
-				return &model.Comment{
-					ID:   strconv.Itoa(note.ID),
-					Body: note.Body,
-					Author: model.User{
-						ID:       strconv.Itoa(note.Author.ID),
-						Username: note.Author.Username,
-						Name:     note.Author.Name,
-					},
-					CreatedAt: lang.Deref(note.CreatedAt),
-					UpdatedAt: lang.Deref(note.UpdatedAt),
-				}, nil
-			}
-		}
-		// Also check individual notes within discussions
-		for _, note := range discussion.Notes {
-			if strconv.Itoa(note.ID) == commentID {
-				return &model.Comment{
-					ID:   strconv.Itoa(note.ID),
-					Body: note.Body,
-					Author: model.User{
-						ID:       strconv.Itoa(note.Author.ID),
-						Username: note.Author.Username,
-						Name:     note.Author.Name,
-					},
-					CreatedAt: lang.Deref(note.CreatedAt),
-					UpdatedAt: lang.Deref(note.UpdatedAt),
-				}, nil
-			}
-		}
-	}
-
-	return nil, errm.New("comment not found")
 }
 
 // ListMergeRequests retrieves multiple merge requests based on filter criteria
@@ -507,7 +389,6 @@ func (p *Provider) GetMergeRequestUpdates(ctx context.Context, projectID string,
 func (p *Provider) IsMergeRequestEvent(event *model.CodeEvent) bool {
 	// Only process merge request events
 	if event.Type != "merge_request" {
-		p.logger.Debug("ignoring non-merge request event", "event_type", event.Type)
 		return false
 	}
 
@@ -523,19 +404,16 @@ func (p *Provider) IsMergeRequestEvent(event *model.CodeEvent) bool {
 	isRelevantAction := slices.Contains(relevantActions, event.Action)
 
 	if !isRelevantAction {
-		p.logger.Debug("ignoring irrelevant action", "action", event.Action)
 		return false
 	}
 
 	// Don't process events from the bot itself to avoid loops
 	if event.User.Username == p.config.BotUsername {
-		p.logger.Debug("ignoring event from bot user")
 		return false
 	}
 
 	// For close/merge actions, we might want to do cleanup but not review
 	if event.Action == "close" || event.Action == "merge" {
-		p.logger.Debug("merge request closed/merged, skipping review", "action", event.Action)
 		return false
 	}
 

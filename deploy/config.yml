@@ -126,7 +126,7 @@ review:
   update_description_on_mr: true
   enable_description_generation: false
   enable_changes_overview_generation: false
-  enable_architecture_review: true
-  enable_code_review: false
+  enable_architecture_review: false
+  enable_code_review: true
   min_files_for_description: 3
   processing_delay: 5s 

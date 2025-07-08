@@ -1,4 +1,4 @@
-package config
+package app
 
 import (
 	"github.com/ilyakaznacheev/cleanenv"
@@ -18,7 +18,7 @@ type Config struct {
 	Server server.Config `yaml:"server"`
 }
 
-func Load(path string) (Config, error) {
+func LoadConfig(path string) (Config, error) {
 	cfg := Config{}
 
 	if path == "" {

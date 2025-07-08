@@ -11,7 +11,7 @@ require (
 	github.com/maxbolgarin/contem v1.5.0
 	github.com/maxbolgarin/errm v1.1.0
 	github.com/maxbolgarin/lang v1.9.0
-	github.com/maxbolgarin/logze/v2 v2.3.0
+	github.com/maxbolgarin/logze/v2 v2.4.0
 	github.com/maxbolgarin/servex/v2 v2.2.0
 	github.com/panjf2000/ants/v2 v2.11.3
 	gitlab.158-160-60-159.sslip.io/astra-monitoring-icl/go-lib v0.0.0-20250523142741-e4a551d67e5c
