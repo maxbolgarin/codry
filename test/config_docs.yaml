@@ -1,0 +1,71 @@
+# Конфигурация GitLab MR Reviewer
+
+gitlab:
+  # Токен доступа к GitLab API (обязательное поле)
+  # Создается в GitLab: User Settings > Access Tokens > Personal Access Tokens
+  # Необходимые права: api, read_user, read_repository
+  # Env: GITLAB_TOKEN
+  token: "${GITLAB_TOKEN}"
+  
+  # Базовый URL вашего GitLab инстанса (опционально)
+  # По умолчанию: https://gitlab.158-160-60-159.sslip.io/
+  # Env: GITLAB_BASE_URL
+  gitlab_base_url: "https://gitlab.158-160-60-159.sslip.io/"
+  
+  # Имя пользователя бота в GitLab (обязательное поле)
+  # Используется для игнорирования собственных действий и избежания зацикливания
+  # Env: GITLAB_BOT_USERNAME
+  bot_username: "mr-reviewer-bot"
+  
+  # Секретный ключ для проверки веб-хуков от GitLab (обязательное поле)
+  # Должен совпадать с секретом, настроенным в GitLab при создании веб-хука
+  # Env: GITLAB_WEBHOOK_SECRET
+  webhook_secret: "${WEBHOOK_SECRET}"
+  
+  # Адрес и порт для запуска веб-хук сервера (обязательное поле)
+  # Формат: ":порт" или "адрес:порт"
+  # Env: GITLAB_WEBHOOK_ADDR
+  webhook_addr: ":8080"
+  
+  # Путь эндпоинта для приема веб-хуков от GitLab (обязательное поле)
+  # Полный URL будет: http://your-server:8080/webhook
+  # Env: GITLAB_WEBHOOK_ENDPOINT
+  webhook_endpoint: "/webhook"
+  
+  # Интервал ожидания при получении 429 ошибки от AI агента (опционально)
+  # По умолчанию: 1m (1 минута)
+  # Поддерживаемые единицы: ns, us, ms, s, m, h
+  # Env: GITLAB_INTERVAL_TO_WAIT_LIMITS
+  interval_to_wait_limits: "1m"
+
+agent:
+  # API ключ для доступа к Gemini API (обязательное поле)
+  # Получается в Google AI Studio: https://aistudio.google.com/app/apikey
+  # Env: GEMINI_API_KEY
+  api_key: "${GEMINI_API_KEY}"
+  
+  # URL прокси-сервера для доступа к Gemini API (опционально)
+  # Может понадобиться в корпоративной среде или при ограничениях доступа
+  # Формат: "http://proxy-server:port" или "socks5://proxy-server:port"
+  # Env: GEMINI_PROXY_URL
+  proxy_url: ""
+  
+  # Название модели Gemini для использования (опционально)
+  # Доступные варианты:
+  # - gemini-2.5-flash-preview-05-20 (по умолчанию, быстрая и экономичная)
+  # - gemini-2.5-pro-preview-06-05 (более мощная, но медленная и дорогая)
+  # Env: GEMINI_MODEL_NAME
+  model_name: "gemini-2.5-flash"
+
+# Конфигурация логирования (опционально)
+logger:
+  # Уровень логирования (опционально)
+  # Доступные варианты: trace, debug, info, warn, error, fatal, disabled
+  level: "debug"
+  
+  # Путь к файлу для логирования (опционально)
+  file: ""
+  
+  # Вывод ошибок в stderr (опционально)
+  # Доступные варианты: "", json, no-color, default
+  stderr: ""

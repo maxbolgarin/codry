@@ -1,0 +1,61 @@
+server:
+  address: ":8080"
+  endpoint: "/webhook"
+  timeout: 30s
+
+provider:
+  type: "github"
+  base_url: "https://github.com"  
+
+agent:
+  type: "gemini"
+  model: "gemini-2.5-flash"  
+
+review:
+  verbose: true
+  file_filter:
+    max_file_size: 1000000  
+    allowed_extensions:
+      - ".go"
+      - ".js"
+      - ".ts"
+      - ".py"
+      - ".java"
+      - ".cpp"
+      - ".c"
+      - ".cs"
+      - ".php"
+      - ".rb"
+      - ".rs"
+      - ".kt"
+      - ".swift"
+      - ".yaml"
+      - ".yml"
+      - ".json"
+      - ".xml"
+      - ".toml"
+      - ".sql"
+      - ".md"
+      - ".dockerfile"
+      - ".sh"
+      - ".bash"
+    excluded_paths:
+      - "vendor/"
+      - "node_modules/"
+      - ".git/"
+      - "dist/"
+      - "build/"
+      - "target/"
+      - "*.min.js"
+      - "*.min.css"
+      - "*.bundle.js"
+      - "*.generated.*"
+    include_only_code: false
+  max_files_per_mr: 500
+  update_description_on_mr: true
+  enable_description_generation: true
+  enable_changes_overview_generation: true
+  enable_architecture_review: true
+  enable_code_review: false
+  min_files_for_description: 3
+  processing_delay: 5s 
