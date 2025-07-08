@@ -106,7 +106,8 @@ func (a *Agent) GenerateChangesOverview(ctx context.Context, diff string) ([]mod
 	var result []model.FileChangeInfo
 	err = json.Unmarshal([]byte(response.Content), &result)
 	if err != nil {
-		fmt.Println(response)
+		fmt.Println("cannot unmarshal changes overview response:", err.Error())
+		fmt.Println(response.Content)
 		return nil, errm.Wrap(err, "failed to parse changes overview response as JSON")
 	}
 
@@ -146,7 +147,8 @@ func (a *Agent) ReviewCode(ctx context.Context, filename, fullFileContent, clean
 
 	result, err := unmarshal[model.FileReviewResult](response.Content)
 	if err != nil {
-		fmt.Println(response)
+		fmt.Println("cannot unmarshal review response:", err.Error())
+		fmt.Println(response.Content)
 		return nil, errm.Wrap(err, "failed to parse enhanced structured review response as JSON")
 	}
 
@@ -155,30 +157,52 @@ func (a *Agent) ReviewCode(ctx context.Context, filename, fullFileContent, clean
 	return &result, nil
 }
 
-// ReviewCodeWithContext performs enhanced code review using rich context information
-func (a *Agent) ReviewCodeWithContext(ctx context.Context, filename string, enhancedCtx *prompts.EnhancedContext) (*model.FileReviewResult, error) {
-	prompt := a.pb.BuildEnhancedReviewPrompt(filename, enhancedCtx, enhancedCtx.CleanDiff)
-	response, err := a.apiCall(ctx, prompt, true)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to call API for enhanced context review")
+// ScoreReviewComments generates scores for review comments to enable filtering of low-quality issues
+func (a *Agent) ScoreReviewComments(ctx context.Context, comments []*model.ReviewAIComment, filePath, diff string) ([]model.IssueScore, error) {
+	if len(comments) == 0 {
+		return []model.IssueScore{}, nil
 	}
 
-	a.log.Debug("enhanced code review generated",
+	prompt := a.pb.BuildScoringPrompt(comments, filePath, diff)
+	response, err := a.apiCall(ctx, prompt, true)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to call API for comment scoring")
+	}
+
+	a.log.Debug("comment scoring generated",
 		"input_tokens", response.PromptTokens,
 		"output_tokens", response.CompletionTokens,
 		"total_tokens", response.TotalTokens,
-		"filename", filename,
+		"filename", filePath,
+		"comments_count", len(comments),
 	)
 
-	result, err := unmarshal[model.FileReviewResult](response.Content)
+	var scores []model.IssueScore
+	err = json.Unmarshal([]byte(response.Content), &scores)
 	if err != nil {
-		fmt.Println(response)
-		return nil, errm.Wrap(err, "failed to parse enhanced context review response as JSON")
+		fmt.Println("cannot unmarshal scoring response:", err.Error())
+		fmt.Println(response.Content)
+		return nil, errm.Wrap(err, "failed to parse comment scoring response as JSON")
 	}
 
-	result.File = filename
+	// Ensure we have the same number of scores as comments
+	if len(scores) != len(comments) {
+		a.log.Warn("score count mismatch", "expected", len(comments), "got", len(scores))
+		// Pad with default scores if necessary
+		for len(scores) < len(comments) {
+			scores = append(scores, model.IssueScore{
+				OverallScore:       0.5,
+				SeverityScore:      0.5,
+				ConfidenceScore:    0.5,
+				RelevanceScore:     0.5,
+				ActionabilityScore: 0.5,
+				ShouldFilter:       false,
+				FilterReason:       "default_score_due_to_mismatch",
+			})
+		}
+	}
 
-	return &result, nil
+	return scores, nil
 }
 
 func (a *Agent) apiCall(ctx context.Context, prompt model.Prompt, isJSON bool) (model.APIResponse, error) {

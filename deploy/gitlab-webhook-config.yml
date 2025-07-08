@@ -1,0 +1,113 @@
+# GitLab Webhook Configuration for Codry AI Code Review Bot
+# This configuration implements all three requested features:
+# 1. Only review MRs where bot is in reviewers list
+# 2. Score and filter issues to prevent spam
+# 3. Single review mode - only review once per MR unless changes occur
+
+server:
+  address: ":8080"
+  endpoint: "/webhook"
+  timeout: 30s
+
+provider:
+  type: "gitlab"
+  base_url: "${GITLAB_BASE_URL}"        # Your GitLab instance URL
+  token: "${GITLAB_TOKEN}"              # GitLab Personal Access Token
+  webhook_secret: "${GITLAB_WEBHOOK_SECRET}"  # Webhook secret for security
+  bot_username: "${GITLAB_BOT_USERNAME}"       # Bot username - CRITICAL for filtering
+
+agent:
+  type: "claude"                        # or "openai", "gemini"
+  api_key: "${CLAUDE_API_KEY}"
+  model: "claude-3-5-haiku-20241022"
+  max_tokens: 4000
+  temperature: 0.05
+  timeout: 60s
+
+review:
+  verbose: true
+  
+  # File filtering to focus on important code changes
+  file_filter:
+    max_file_size: 500000               # 500KB max per file
+    allowed_extensions:
+      - ".go"
+      - ".js"
+      - ".ts"
+      - ".py"
+      - ".java"
+      - ".php"
+      - ".rb"
+      - ".rs"
+      - ".kt"
+      - ".swift"
+    excluded_paths:
+      - "vendor/"
+      - "node_modules/"
+      - ".git/"
+      - "dist/"
+      - "build/"
+      - "target/"
+      - "*.min.js"
+      - "*.generated.*"
+    include_only_code: true
+  
+  max_files_per_mr: 20                  # Limit files per review to maintain quality
+  update_description_on_mr: true
+  enable_description_generation: true
+  enable_changes_overview_generation: true
+  enable_architecture_review: true
+  enable_code_review: true              # Enable line-by-line reviews
+  min_files_for_description: 2
+  processing_delay: 3s
+  
+  # FEATURE 2: Dual-mode scoring to filter low-quality issues (prevents spam)
+  scoring:
+    mode: "cheap"                       # Scoring modes:
+                                        # "disabled" - No filtering, all comments posted
+                                        # "cheap" - Fast scoring using comment metadata (priority, confidence, issue type)
+                                        # "ai" - Thorough AI-powered scoring with additional LLM call (costs more tokens)
+    min_overall_score: 0.35             # Filter issues below 35% quality
+    min_severity_score: 0.25            # Allow some info-level issues
+    min_confidence_score: 0.45          # Require reasonable confidence
+    min_relevance_score: 0.35           # Must be relevant to changes
+    min_actionability_score: 0.35       # Must provide actionable feedback
+    verbose_scoring: true               # Log scoring details for tuning
+  
+  # FEATURE 3: Single review mode (only review once per MR unless changes)
+  enable_single_review_mode: true      # Prevent re-reviewing same content
+  review_tracking_ttl: 48h             # Remember reviews for 48 hours
+
+# Environment Variables Required:
+# GITLAB_BASE_URL=https://your-gitlab.com
+# GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
+# GITLAB_WEBHOOK_SECRET=your-webhook-secret
+# GITLAB_BOT_USERNAME=your-bot-username
+# CLAUDE_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxx
+
+# GitLab Webhook Setup:
+# 1. Go to Project Settings → Webhooks
+# 2. URL: https://your-server.com/webhook
+# 3. Secret Token: (same as GITLAB_WEBHOOK_SECRET)
+# 4. Trigger: "Merge request events"
+# 5. Enable webhook
+#
+# IMPORTANT: Add your bot user as a reviewer to MRs you want reviewed!
+# The bot will ONLY review MRs where it's explicitly added as a reviewer.
+
+# NEW FEATURES EXPLAINED:
+#
+# 1. MULTISTAGE REVIEW GENERATION:
+#    - AI now generates MORE comments (including low-confidence suggestions)
+#    - Descriptions are shorter and more concise to save tokens
+#    - Code snippets are optional and only included for high-priority issues
+#
+# 2. DUAL SCORING MODES:
+#    - "cheap": Fast scoring using existing comment metadata (recommended)
+#    - "ai": Additional AI call for detailed scoring (costs more tokens)
+#    - Cheap mode uses priority, confidence, and issue type to score comments
+#
+# 3. IMPROVED FILTERING:
+#    - Review generation is more permissive (finds more potential issues)
+#    - Scoring system filters out low-quality suggestions
+#    - Result: Better coverage with intelligent quality control 

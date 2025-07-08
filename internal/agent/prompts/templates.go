@@ -2,6 +2,7 @@ package prompts
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/maxbolgarin/codry/internal/model"
@@ -144,19 +145,13 @@ func (tb *Builder) BuildArchitectureReviewPrompt(diff string) model.Prompt {
 	}
 }
 
-// BuildEnhancedStructuredReviewPrompt creates a prompt for structured code review with enhanced context
-func (tb *Builder) BuildEnhancedReviewPrompt(filename string, enhancedCtx *EnhancedContext, cleanDiff string) model.Prompt {
+// BuildReviewPrompt creates a prompt for structured code review with full file content and clean diff (legacy method)
+func (tb *Builder) BuildReviewPrompt(filename, fullFileContent, cleanDiff string) model.Prompt {
 	systemPrompt := fmt.Sprintf(reviewSystemPromptTemplate, tb.language.Instructions)
-
-	// Build enhanced context section
-	contextSection := tb.buildContextSection(enhancedCtx)
-
-	fmt.Println(filename, contextSection)
-
 	userPrompt := fmt.Sprintf(structuredReviewUserPromptTemplate,
-		contextSection,
+		"", // No additional context
 		filename,
-		enhancedCtx.FileContent,
+		fullFileContent,
 		cleanDiff,
 	)
 
@@ -167,184 +162,45 @@ func (tb *Builder) BuildEnhancedReviewPrompt(filename string, enhancedCtx *Enhan
 	}
 }
 
-// buildContextSection creates a rich context section for the prompt
-func (tb *Builder) buildContextSection(ctx *EnhancedContext) string {
-	var contextBuilder strings.Builder
+// BuildScoringPrompt creates a prompt for scoring review comments to enable filtering
+func (tb *Builder) BuildScoringPrompt(comments []*model.ReviewAIComment, filePath, diff string) model.Prompt {
+	systemPrompt := fmt.Sprintf(scoringSystemPromptTemplate, tb.language.Instructions)
 
-	contextBuilder.WriteString("## 🧠 ENHANCED CONTEXT ANALYSIS\n\n")
-
-	// Imported packages
-	if len(ctx.ImportedPackages) > 0 {
-		contextBuilder.WriteString("### 📦 IMPORTED PACKAGES:\n")
-		for _, pkg := range ctx.ImportedPackages {
-			contextBuilder.WriteString(fmt.Sprintf("- %s\n", pkg))
-		}
-		contextBuilder.WriteString("\n")
+	// Estimate and pre-allocate comments builder capacity
+	estimatedSize := len(comments) * 300 // ~300 chars average per comment
+	for _, comment := range comments {
+		estimatedSize += len(comment.Title) + len(comment.Description) +
+			len(comment.Suggestion) + len(comment.CodeSnippet)
 	}
 
-	// Function signatures with enhanced information
-	if len(ctx.FunctionSignatures) > 0 {
-		contextBuilder.WriteString("### 🔧 FUNCTION SIGNATURES:\n")
-		for _, fn := range ctx.FunctionSignatures {
-			exported := ""
-			if fn.IsExported {
-				exported = " (exported)"
-			}
-			contextBuilder.WriteString(fmt.Sprintf("- **%s**%s", fn.Name, exported))
-			if len(fn.Parameters) > 0 {
-				contextBuilder.WriteString(fmt.Sprintf(" - params: %s", strings.Join(fn.Parameters, ", ")))
-			}
-			if len(fn.Returns) > 0 {
-				contextBuilder.WriteString(fmt.Sprintf(" - returns: %s", strings.Join(fn.Returns, ", ")))
-			}
-			contextBuilder.WriteString("\n")
+	var commentsBuilder strings.Builder
+	commentsBuilder.Grow(estimatedSize)
+
+	// Build comments with efficient sprintf usage
+	for i, comment := range comments {
+		lineRange := strconv.Itoa(comment.Line)
+		if comment.EndLine > comment.Line {
+			lineRange += "-" + strconv.Itoa(comment.EndLine)
 		}
-		contextBuilder.WriteString("\n")
+
+		// Main comment structure with sprintf for readability
+		commentsBuilder.WriteString(fmt.Sprintf("**Comment %d:**\n- Line: %s\n- Issue Type: %s\n- Priority: %s\n- Confidence: %s\n- Title: %s\n- Description: %s\n",
+			i+1, lineRange, comment.IssueType, comment.Priority, comment.Confidence, comment.Title, comment.Description))
+
+		// Optional fields
+		if comment.Suggestion != "" {
+			commentsBuilder.WriteString(fmt.Sprintf("- Suggestion: %s\n", comment.Suggestion))
+		}
+
+		if comment.CodeSnippet != "" {
+			commentsBuilder.WriteString(fmt.Sprintf("- Code Snippet: ```\n%s\n```\n", comment.CodeSnippet))
+		}
+
+		commentsBuilder.WriteString("\n")
 	}
 
-	// Type definitions with enhanced information
-	if len(ctx.TypeDefinitions) > 0 {
-		contextBuilder.WriteString("### 🏗️ TYPE DEFINITIONS:\n")
-		for _, typedef := range ctx.TypeDefinitions {
-			exported := ""
-			if typedef.IsExported {
-				exported = " (exported)"
-			}
-			contextBuilder.WriteString(fmt.Sprintf("- **%s** %s%s", typedef.Name, typedef.Type, exported))
-			if len(typedef.Fields) > 0 {
-				contextBuilder.WriteString(fmt.Sprintf(" - fields: %s", strings.Join(typedef.Fields, ", ")))
-			}
-			if len(typedef.Methods) > 0 {
-				contextBuilder.WriteString(fmt.Sprintf(" - methods: %s", strings.Join(typedef.Methods, ", ")))
-			}
-			contextBuilder.WriteString("\n")
-		}
-		contextBuilder.WriteString("\n")
-	}
-
-	// Enhanced security context
-	secCtx := ctx.SecurityContext
-	if secCtx.HasAuthenticationLogic || secCtx.HandlesUserInput || secCtx.AccessesDatabase ||
-		secCtx.NetworkOperations || secCtx.CryptographicOperations {
-		contextBuilder.WriteString("### 🔒 SECURITY CONTEXT:\n")
-		if secCtx.HasAuthenticationLogic {
-			contextBuilder.WriteString("🚨 **Authentication/Authorization logic detected** - Pay special attention to access controls\n")
-		}
-		if secCtx.HandlesUserInput {
-			contextBuilder.WriteString("⚠️ **User input handling detected** - Verify input validation and sanitization\n")
-		}
-		if secCtx.AccessesDatabase {
-			contextBuilder.WriteString("🛡️ **Database operations detected** - Check for SQL injection and data validation\n")
-		}
-		if secCtx.NetworkOperations {
-			contextBuilder.WriteString("🌐 **Network operations detected** - Verify secure communication and error handling\n")
-		}
-		if secCtx.CryptographicOperations {
-			contextBuilder.WriteString("🔐 **Cryptographic operations detected** - Ensure proper key management and algorithms\n")
-		}
-		contextBuilder.WriteString("\n")
-	}
-
-	// Usage patterns with real code examples
-	if len(ctx.UsagePatterns) > 0 {
-		contextBuilder.WriteString("### 🎯 USAGE PATTERNS:\n")
-		for _, pattern := range ctx.UsagePatterns {
-			contextBuilder.WriteString(fmt.Sprintf("- **%s**: %s\n", pattern.Pattern, pattern.Description))
-
-			// Show actual code examples if available
-			if len(pattern.Examples) > 0 {
-				contextBuilder.WriteString("  ```\n")
-				for i, example := range pattern.Examples {
-					if i < 2 { // Limit to 2 examples to avoid overwhelming
-						contextBuilder.WriteString(fmt.Sprintf("  %s\n", example))
-					}
-				}
-				contextBuilder.WriteString("  ```\n")
-			}
-
-			// Add best practice guidance
-			if pattern.BestPractice != "" {
-				contextBuilder.WriteString(fmt.Sprintf("  💡 **Best Practice**: %s\n", pattern.BestPractice))
-			}
-		}
-		contextBuilder.WriteString("\n")
-	}
-
-	// Related files with enhanced context
-	if len(ctx.RelatedFiles) > 0 {
-		contextBuilder.WriteString("### 🔗 RELATED FILES:\n")
-		for _, related := range ctx.RelatedFiles {
-			relationshipIcon := tb.getRelationshipIcon(related.Relationship)
-			contextBuilder.WriteString(fmt.Sprintf("- %s **%s** (%s):\n", relationshipIcon, related.Path, related.Relationship))
-
-			// Show snippet if it's meaningful
-			if related.Snippet != "" && len(related.Snippet) < 300 {
-				contextBuilder.WriteString("```\n")
-				contextBuilder.WriteString(related.Snippet)
-				contextBuilder.WriteString("\n```\n")
-			}
-		}
-		contextBuilder.WriteString("\n")
-	}
-
-	// Semantic changes analysis with enhanced details
-	if len(ctx.SemanticChanges) > 0 {
-		contextBuilder.WriteString("### 🧠 SEMANTIC CHANGES ANALYSIS:\n")
-		for _, change := range ctx.SemanticChanges {
-			impactIcon := "💡"
-			if change.Impact == "high" {
-				impactIcon = "🚨"
-			} else if change.Impact == "medium" {
-				impactIcon = "⚠️"
-			}
-			contextBuilder.WriteString(fmt.Sprintf("- %s **%s** (%s impact): %s\n",
-				impactIcon, change.Type, change.Impact, change.Description))
-			if change.Context != "" {
-				contextBuilder.WriteString(fmt.Sprintf("  📋 **Context**: %s\n", change.Context))
-			}
-			if len(change.Lines) > 0 {
-				contextBuilder.WriteString(fmt.Sprintf("  📍 **Lines**: %v\n", change.Lines))
-			}
-		}
-		contextBuilder.WriteString("\n")
-	}
-
-	return contextBuilder.String()
-}
-
-// getRelationshipIcon returns an appropriate icon for the relationship type
-func (tb *Builder) getRelationshipIcon(relationship string) string {
-	switch strings.ToLower(relationship) {
-	case "dependency", "function_call", "method_call":
-		return "📞"
-	case "dependent", "dependents":
-		return "🎯"
-	case "test", "tests":
-		return "🧪"
-	case "same_package":
-		return "📦"
-	case "imports", "imported_by":
-		return "📥"
-	case "before_state":
-		return "⏪"
-	case "architecture", "architectural":
-		return "🏗️"
-	case "security":
-		return "🔒"
-	default:
-		return "📄"
-	}
-}
-
-// BuildReviewPrompt creates a prompt for structured code review with full file content and clean diff (legacy method)
-func (tb *Builder) BuildReviewPrompt(filename, fullFileContent, cleanDiff string) model.Prompt {
-	systemPrompt := fmt.Sprintf(reviewSystemPromptTemplate, tb.language.Instructions)
-	userPrompt := fmt.Sprintf(structuredReviewUserPromptTemplate,
-		"", // No additional context
-		filename,
-		fullFileContent,
-		cleanDiff,
-	)
+	// Build user prompt with simple sprintf
+	userPrompt := fmt.Sprintf(scoringUserPromptTemplate, filePath, diff, commentsBuilder.String())
 
 	return model.Prompt{
 		SystemPrompt: systemPrompt,

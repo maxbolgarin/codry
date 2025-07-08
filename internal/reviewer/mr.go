@@ -2,7 +2,9 @@ package reviewer
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/codry/internal/model"
@@ -26,6 +28,15 @@ func (s *Reviewer) ReviewMergeRequest(ctx context.Context, projectID string, mer
 		return errm.New("merge request is nil")
 	}
 
+	// Check single review mode - only review once unless there are new changes
+	if s.cfg.EnableSingleReviewMode && s.hasAlreadyBeenReviewed(projectID, mergeRequest) {
+		s.log.Debug("MR already reviewed in single review mode, skipping",
+			"mr_iid", mergeRequest.IID,
+			"project_id", projectID,
+			"current_sha", mergeRequest.SHA)
+		return nil
+	}
+
 	diffs, err := s.provider.GetMergeRequestDiffs(ctx, projectID, mergeRequest.IID)
 	if err != nil {
 		return errm.Wrap(err, "failed to get merge request diffs")
@@ -37,7 +48,75 @@ func (s *Reviewer) ReviewMergeRequest(ctx context.Context, projectID string, mer
 		Changes:      diffs,
 	})
 
+	// Mark MR as reviewed in single review mode
+	if s.cfg.EnableSingleReviewMode {
+		s.markMRAsReviewed(projectID, mergeRequest)
+	}
+
 	return nil
+}
+
+// hasAlreadyBeenReviewed checks if this MR has already been reviewed
+func (s *Reviewer) hasAlreadyBeenReviewed(projectID string, mr *model.MergeRequest) bool {
+	mrKey := fmt.Sprintf("%s:%d", projectID, mr.IID)
+
+	trackingInfo := s.reviewedMRs.Get(mrKey)
+	// Check if trackingInfo has a zero value (not found)
+	if trackingInfo.LastReviewedSHA == "" {
+		return false
+	}
+
+	// Check if the TTL has expired
+	if s.cfg.ReviewTrackingTTL > 0 && time.Since(trackingInfo.LastReviewedAt) > s.cfg.ReviewTrackingTTL {
+		s.reviewedMRs.Delete(mrKey)
+		return false
+	}
+
+	// If SHA changed, need to review again
+	if trackingInfo.LastReviewedSHA != mr.SHA {
+		s.log.Debug("MR SHA changed since last review",
+			"mr_iid", mr.IID,
+			"project_id", projectID,
+			"old_sha", trackingInfo.LastReviewedSHA,
+			"new_sha", mr.SHA)
+		return false
+	}
+
+	s.log.Debug("MR already reviewed",
+		"mr_iid", mr.IID,
+		"project_id", projectID,
+		"sha", mr.SHA,
+		"last_reviewed", trackingInfo.LastReviewedAt,
+		"review_count", trackingInfo.ReviewCount)
+
+	return true
+}
+
+// markMRAsReviewed marks an MR as reviewed
+func (s *Reviewer) markMRAsReviewed(projectID string, mr *model.MergeRequest) {
+	mrKey := fmt.Sprintf("%s:%d", projectID, mr.IID)
+
+	// Get existing info or create new
+	existingInfo := s.reviewedMRs.Get(mrKey)
+	reviewCount := 1
+	// Check if existing info has a non-zero value (found)
+	if existingInfo.LastReviewedSHA != "" {
+		reviewCount = existingInfo.ReviewCount + 1
+	}
+
+	trackingInfo := reviewTrackingInfo{
+		LastReviewedSHA: mr.SHA,
+		LastReviewedAt:  time.Now(),
+		ReviewCount:     reviewCount,
+	}
+
+	s.reviewedMRs.Set(mrKey, trackingInfo)
+
+	s.log.Debug("marked MR as reviewed",
+		"mr_iid", mr.IID,
+		"project_id", projectID,
+		"sha", mr.SHA,
+		"review_count", reviewCount)
 }
 
 // ProcessMergeRequest processes a merge request for the first time

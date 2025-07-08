@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/codry/internal/agent"
@@ -27,6 +28,16 @@ type Reviewer struct {
 
 	// Track processed MRs and reviewed files
 	processedMRs *abstract.SafeMapOfMaps[string, string, string]
+
+	// Track reviewed MRs to implement single review mode
+	reviewedMRs *abstract.SafeMap[string, reviewTrackingInfo]
+}
+
+// reviewTrackingInfo stores information about when an MR was reviewed
+type reviewTrackingInfo struct {
+	LastReviewedSHA string
+	LastReviewedAt  time.Time
+	ReviewCount     int
 }
 
 // New creates a new reviewer
@@ -40,6 +51,11 @@ func New(cfg Config, provider interfaces.CodeProvider, agent *agent.Agent) (*Rev
 		cfg.Language = model.LanguageEnglish
 	}
 
+	// Initialize default scoring config if not provided
+	if cfg.Scoring.Mode != ScoringModeDisabled && cfg.Scoring.MinOverallScore == 0 {
+		cfg.Scoring = defaultScoringConfig()
+	}
+
 	s := &Reviewer{
 		provider:     provider,
 		agent:        agent,
@@ -48,6 +64,7 @@ func New(cfg Config, provider interfaces.CodeProvider, agent *agent.Agent) (*Rev
 		pool:         pool,
 		parser:       newDiffParser(),
 		processedMRs: abstract.NewSafeMapOfMaps[string, string, string](),
+		reviewedMRs:  abstract.NewSafeMap[string, reviewTrackingInfo](),
 	}
 
 	return s, nil

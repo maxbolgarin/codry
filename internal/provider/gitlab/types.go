@@ -27,4 +27,28 @@ type gitlabPayload struct {
 			ID string `json:"id"`
 		} `json:"last_commit"`
 	} `json:"object_attributes"`
+	// Reviewers information from webhook payload
+	Reviewers []struct {
+		ID       int    `json:"id"`
+		Username string `json:"username"`
+		Name     string `json:"name"`
+		Email    string `json:"email"`
+	} `json:"reviewers"`
+	// Changes for tracking specific reviewer modifications
+	Changes struct {
+		Reviewers struct {
+			Previous []struct {
+				ID       int    `json:"id"`
+				Username string `json:"username"`
+				Name     string `json:"name"`
+				Email    string `json:"email"`
+			} `json:"previous"`
+			Current []struct {
+				ID       int    `json:"id"`
+				Username string `json:"username"`
+				Name     string `json:"name"`
+				Email    string `json:"email"`
+			} `json:"current"`
+		} `json:"reviewers"`
+	} `json:"changes"`
 }

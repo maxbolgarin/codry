@@ -20,7 +20,9 @@ func (s *Reviewer) generateCodeReview(ctx context.Context, bundle *reviewBundle)
 	}
 	bundle.log.Debug("generating code review")
 
-	s.reviewCodeChanges(ctx, bundle)
+	for _, change := range bundle.filesToReview {
+		s.reviewCodeChanges(ctx, bundle, change)
+	}
 
 	bundle.log.InfoIf(s.cfg.Verbose, "finished code review")
 
@@ -28,42 +30,40 @@ func (s *Reviewer) generateCodeReview(ctx context.Context, bundle *reviewBundle)
 }
 
 // reviewCodeChanges reviews individual files and creates comments
-func (s *Reviewer) reviewCodeChanges(ctx context.Context, bundle *reviewBundle) {
-	for _, change := range bundle.filesToReview {
-		// Guard old path
-		change.OldPath = lang.Check(change.OldPath, change.NewPath)
+func (s *Reviewer) reviewCodeChanges(ctx context.Context, bundle *reviewBundle, change *model.FileDiff) {
+	// Guard old path
+	change.OldPath = lang.Check(change.OldPath, change.NewPath)
 
-		fileHash := s.getFileHash(change.Diff)
-		if oldHash, ok := s.processedMRs.Lookup(bundle.request.String(), change.NewPath); ok {
-			if oldHash == fileHash {
-				bundle.log.DebugIf(s.cfg.Verbose, "skipping already reviewed", "file", change.NewPath)
-				continue
-			}
+	fileHash := s.getFileHash(change.Diff)
+	if oldHash, ok := s.processedMRs.Lookup(bundle.request.String(), change.NewPath); ok {
+		if oldHash == fileHash {
+			bundle.log.DebugIf(s.cfg.Verbose, "skipping already reviewed", "file", change.NewPath)
+			return
 		}
-
-		bundle.log.DebugIf(s.cfg.Verbose, "performing review", "file", change.NewPath)
-
-		reviewResult, err := s.performBasicReview(ctx, bundle.request, change, bundle.log)
-		if err != nil {
-			msg := "failed to perform basic review"
-			bundle.log.Err(err, msg)
-			bundle.result.Errors = append(bundle.result.Errors, errm.Wrap(err, msg))
-			continue
-		}
-
-		// Skip if no issues found
-		if reviewResult == nil || !reviewResult.HasIssues || len(reviewResult.Comments) == 0 {
-			bundle.log.DebugIf(s.cfg.Verbose, "no issues found", "file", change.NewPath)
-			s.processedMRs.Set(bundle.request.String(), change.NewPath, fileHash)
-			continue
-		}
-
-		commentsCreated := s.processReviewResults(ctx, bundle.request, change, reviewResult, bundle.log)
-		bundle.result.CommentsCreated += commentsCreated
-		s.processedMRs.Set(bundle.request.String(), change.NewPath, fileHash)
-
-		bundle.log.InfoIf(s.cfg.Verbose, "reviewed successfully", "file", change.NewPath, "comments", len(reviewResult.Comments))
 	}
+
+	bundle.log.DebugIf(s.cfg.Verbose, "performing review", "file", change.NewPath)
+
+	reviewResult, err := s.performBasicReview(ctx, bundle.request, change, bundle.log)
+	if err != nil {
+		msg := "failed to perform basic review"
+		bundle.log.Err(err, msg)
+		bundle.result.Errors = append(bundle.result.Errors, errm.Wrap(err, msg))
+		return
+	}
+
+	// Skip if no issues found
+	if reviewResult == nil || !reviewResult.HasIssues || len(reviewResult.Comments) == 0 {
+		bundle.log.DebugIf(s.cfg.Verbose, "no issues found", "file", change.NewPath)
+		s.processedMRs.Set(bundle.request.String(), change.NewPath, fileHash)
+		return
+	}
+
+	commentsCreated := s.processReviewResults(ctx, bundle.request, change, reviewResult, bundle.log)
+	bundle.result.CommentsCreated += commentsCreated
+	s.processedMRs.Set(bundle.request.String(), change.NewPath, fileHash)
+
+	bundle.log.InfoIf(s.cfg.Verbose, "reviewed successfully", "file", change.NewPath, "comments", len(reviewResult.Comments))
 }
 
 // performBasicReview performs basic review without enhanced context (fallback)
@@ -87,20 +87,25 @@ func (s *Reviewer) processReviewResults(ctx context.Context, request model.Revie
 	// Set programming language for each comment if not already set
 	detectedLanguage := detectProgrammingLanguage(change.NewPath)
 	for _, comment := range reviewResult.Comments {
-		if comment.CodeLanguage == "" {
-			comment.CodeLanguage = detectedLanguage
-		}
+		comment.CodeLanguage = lang.Check(comment.CodeLanguage, detectedLanguage)
+	}
+
+	// Score and filter comments based on scoring mode
+	var filteredComments []*model.ReviewAIComment
+	if s.cfg.Scoring.Mode != ScoringModeDisabled {
+		filteredComments = s.scoreAndFilterComments(ctx, reviewResult.Comments, change, log)
+	} else {
+		filteredComments = reviewResult.Comments
 	}
 
 	// Create line-specific comments
-	for _, reviewComment := range reviewResult.Comments {
+	for _, reviewComment := range filteredComments {
 		// Ensure file path is set (AI might not include it in JSON response)
 		if reviewComment.FilePath == "" {
 			reviewComment.FilePath = change.NewPath
 		}
 
-		comment := reviewToComment(s.cfg.Language, reviewComment)
-		comment.Type = model.CommentTypeInline
+		comment := buildComment(s.cfg.Language, reviewComment)
 
 		err := s.provider.CreateComment(ctx, request.ProjectID, request.MergeRequest.IID, comment)
 		if err != nil {
@@ -117,6 +122,17 @@ func (s *Reviewer) processReviewResults(ctx context.Context, request model.Revie
 			"type", reviewComment.IssueType,
 			"priority", reviewComment.Priority,
 			"confidence", reviewComment.Confidence)
+	}
+
+	// Log filtering results if scoring was used
+	if s.cfg.Scoring.Mode != ScoringModeDisabled && len(reviewResult.Comments) > len(filteredComments) {
+		filteredCount := len(reviewResult.Comments) - len(filteredComments)
+		log.InfoIf(s.cfg.Verbose, "filtered low-quality comments",
+			"total_comments", len(reviewResult.Comments),
+			"filtered_count", filteredCount,
+			"final_count", len(filteredComments),
+			"scoring_mode", string(s.cfg.Scoring.Mode),
+			"file", change.NewPath)
 	}
 
 	return commentsCreated
@@ -199,8 +215,8 @@ func (s *Reviewer) getFileHash(diff string) string {
 	return fmt.Sprintf("%d:%d", len(diff), hash)
 }
 
-// reviewToComment converts a LineReviewComment to a Comment model
-func reviewToComment(language model.Language, lrc *model.ReviewAIComment) *model.Comment {
+// buildComment converts a LineReviewComment to a Comment model
+func buildComment(language model.Language, lrc *model.ReviewAIComment) *model.Comment {
 	reviewHeaders := prompts.DefaultLanguages[language].CodeReviewHeaders
 	header := reviewHeaders.GetByType(lrc.IssueType)
 
@@ -255,7 +271,7 @@ func reviewToComment(language model.Language, lrc *model.ReviewAIComment) *model
 		Line:     lrc.Line,
 		OldLine:  lrc.OldLine,
 		Position: lrc.Position,
-		Type:     model.CommentTypeReview,
+		Type:     model.CommentTypeInline,
 	}
 }
 

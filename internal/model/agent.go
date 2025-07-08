@@ -81,6 +81,30 @@ type ReviewAIComment struct {
 	CodeSnippet  string           `json:"code_snippet,omitempty"`
 }
 
+// IssueScore represents a score for a code review issue
+type IssueScore struct {
+	// Overall score from 0.0 to 1.0 (higher = more important/relevant)
+	OverallScore float64 `json:"overall_score"`
+
+	// Severity score (0.0 = info, 1.0 = critical)
+	SeverityScore float64 `json:"severity_score"`
+
+	// Confidence score (0.0 = low confidence, 1.0 = high confidence)
+	ConfidenceScore float64 `json:"confidence_score"`
+
+	// Relevance score (0.0 = not relevant to current change, 1.0 = highly relevant)
+	RelevanceScore float64 `json:"relevance_score"`
+
+	// Actionability score (0.0 = vague feedback, 1.0 = specific actionable)
+	ActionabilityScore float64 `json:"actionability_score"`
+
+	// Whether this issue should be filtered out
+	ShouldFilter bool `json:"should_filter"`
+
+	// Reason for filtering (if ShouldFilter is true)
+	FilterReason string `json:"filter_reason,omitempty"`
+}
+
 // IsRangeComment returns true if this comment spans mul	tiple lines
 func (lrc *ReviewAIComment) IsRangeComment() bool {
 	return lrc.EndLine > 0 && lrc.EndLine > lrc.Line

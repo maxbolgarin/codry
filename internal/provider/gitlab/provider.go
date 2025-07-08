@@ -76,6 +76,16 @@ func (p *Provider) ParseWebhookEvent(payload []byte) (*model.CodeEvent, error) {
 		return nil, errm.Wrap(err, "failed to parse GitLab webhook payload")
 	}
 
+	// Convert reviewers from webhook payload
+	var reviewers []model.User
+	for _, reviewer := range gitlabPayload.Reviewers {
+		reviewers = append(reviewers, model.User{
+			ID:       strconv.Itoa(reviewer.ID),
+			Username: reviewer.Username,
+			Name:     reviewer.Name,
+		})
+	}
+
 	event := &model.CodeEvent{
 		Type:      gitlabPayload.ObjectKind,
 		Action:    gitlabPayload.ObjectAttributes.Action,
@@ -95,6 +105,7 @@ func (p *Provider) ParseWebhookEvent(payload []byte) (*model.CodeEvent, error) {
 			URL:          gitlabPayload.ObjectAttributes.URL,
 			State:        gitlabPayload.ObjectAttributes.State,
 			SHA:          gitlabPayload.ObjectAttributes.LastCommit.ID,
+			Reviewers:    reviewers,
 		},
 	}
 
@@ -417,8 +428,36 @@ func (p *Provider) IsMergeRequestEvent(event *model.CodeEvent) bool {
 		return false
 	}
 
-	p.logger.Debug("merge request event should be processed", "action", event.Action)
+	// CRITICAL: Only process MRs where the bot is in the reviewers list
+	// This implements requirement #1: analyze all webhooks but only review MRs where bot is reviewer
+	if !p.isBotInReviewersList(event.MergeRequest) {
+		p.logger.Debug("bot not in reviewers list, skipping review",
+			"mr_iid", event.MergeRequest.IID,
+			"bot_username", p.config.BotUsername,
+			"reviewers_count", len(event.MergeRequest.Reviewers))
+		return false
+	}
+
+	p.logger.Debug("merge request event should be processed",
+		"action", event.Action,
+		"mr_iid", event.MergeRequest.IID,
+		"bot_in_reviewers", true)
 	return true
+}
+
+// isBotInReviewersList checks if the configured bot username is in the MR reviewers list
+func (p *Provider) isBotInReviewersList(mr *model.MergeRequest) bool {
+	if mr == nil || p.config.BotUsername == "" {
+		return false
+	}
+
+	for _, reviewer := range mr.Reviewers {
+		if reviewer.Username == p.config.BotUsername {
+			return true
+		}
+	}
+
+	return false
 }
 
 // isRangeComment checks if a comment body indicates it's a range comment

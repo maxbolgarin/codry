@@ -11,8 +11,26 @@ agent:
   type: "gemini"
   model: "gemini-2.5-flash"  
 
+
+
+
 review:
+  scoring:
+    mode: "ai"                 # Scoring mode: "disabled", "cheap" (fast), or "ai" (thorough)
+    min_overall_score: 0.3     # Filter out issues with overall score < 0.3 (0.0-1.0)
+    min_severity_score: 0.2       # Allow info-level issues if they're otherwise good (0.0-1.0)
+    min_confidence_score: 0.4     # Filter out low-confidence issues (0.0-1.0)
+    min_relevance_score: 0.3      # Filter out issues not relevant to changes (0.0-1.0)
+    min_actionability_score: 0.3  # Filter out vague, non-actionable feedback (0.0-1.0)
+
+  # Single review mode - only review each MR once unless there are new changes
+  enable_single_review_mode: true # Only review MRs once per SHA to avoid spam
+  review_tracking_ttl: 24h        # How long to remember that an MR was reviewed 
+
+
   verbose: true
+
+
   file_filter:
     max_file_size: 1000000  
     allowed_extensions:
@@ -52,10 +70,10 @@ review:
       - "*.generated.*"
     include_only_code: false
   max_files_per_mr: 500
-  update_description_on_mr: true
   enable_description_generation: true
   enable_changes_overview_generation: true
   enable_architecture_review: true
-  enable_code_review: false
+  enable_code_review: true
   min_files_for_description: 3
-  processing_delay: 5s 
+  processing_delay: 5s
+  

@@ -233,15 +233,16 @@ LANGUAGE INSTRUCTIONS:
 %s
 
 EXPERT REVIEW STANDARDS:
-- Focus on CRITICAL and HIGH-IMPACT issues that affect system reliability, security, or maintainability
-- Provide ACTIONABLE solutions with complete, working code examples
-- Suggest modern, clean code patterns rather than quick fixes
+- Be MORE PERMISSIVE with findings - include issues even with medium/low confidence since filtering will handle quality
+- Focus on ALL potential issues: critical, high, medium, and even lower-impact improvements and ideas
+- Provide ACTIONABLE solutions but keep descriptions CONCISE (1-3 sentences max)
+- Code snippets are OPTIONAL - only include for critical/high priority issues or when the fix is non-obvious
+- For low-priority issues, ideas, and style suggestions: provide title + brief description without code
 - Consider future maintainability and extensibility
 - Think about edge cases and failure scenarios
-- Analyze cross-cutting concerns and system-wide implications
-- Write clear and concise description of the issue and solution without long descriptions
+- Write SHORT, PUNCHY descriptions that save tokens while remaining informative
 
-Provide solutions that a senior developer would implement in production - clean, robust, and following industry best practices.
+Be more generous with finding issues since the scoring system will filter out low-quality feedback.
 `
 
 var structuredReviewUserPromptTemplate = `
@@ -326,12 +327,22 @@ OUTPUT FORMAT: Respond with a valid JSON object:
       "confidence": "very_high|high|medium|low", 
       "priority": "critical|high|medium|backlog",
       "title": "Precise, technical description of the core issue",
-      "description": "Deep analysis: root cause, business impact, and why this matters for system reliability/security/performance",
-      "suggestion": "Comprehensive explanation of the recommended solution approach, including architectural considerations and best practices",
-      "code_snippet": "Complete, production-ready code that fixes the issue with proper error handling, following clean code principles"
+      "description": "CONCISE analysis (1-3 sentences): what's wrong and why it matters",
+      "suggestion": "BRIEF explanation of the recommended solution (1-2 sentences)",
+      "code_snippet": "OPTIONAL: Only include for critical/high priority issues or complex fixes. Omit for style, ideas, or obvious fixes"
     }
   ]
 }
+
+**FIELD REQUIREMENTS:**
+- **title**: Always required, be specific
+- **description**: Always required, but keep SHORT (1-3 sentences max)
+- **suggestion**: Always required, but keep BRIEF (1-2 sentences)
+- **code_snippet**: OPTIONAL - only include when:
+  * Priority is "critical" or "high" 
+  * The fix is non-obvious or complex
+  * Code example adds significant value
+  * For "medium" and "backlog" issues, usually omit unless truly helpful
 
 ISSUE CLASSIFICATION:
 
@@ -352,29 +363,39 @@ ISSUE CLASSIFICATION:
 - Minor performance optimizations
 - Potential edge cases or validation gaps
 - Design pattern improvements
+- Error handling improvements
+- Maintainability concerns
 
 **BACKLOG** (Backlog Priority):
-- Style improvements
-- Minor refactoring opportunities
+- Style improvements and consistency
+- Minor refactoring opportunities  
 - Documentation or clarity improvements
+- Code organization suggestions
+- Naming improvements
+- Minor optimization ideas
+- General best practice suggestions
+
+**REVIEW APPROACH**: Be MORE INCLUSIVE - find issues across ALL priority levels. The scoring system will filter appropriately.
 
 MODEL CONFIDENCE LEVELS:
 - **very_high** (95-100%): Definite issue with clear evidence
 - **high** (80-95%): Very likely issue based on code analysis
-- **medium** (60-80%): Probable issue requiring context consideration
-- **low** (40-60%): Potential issue or general suggestion for improvement
+- **medium** (50-80%): Probable issue or reasonable suggestion
+- **low** (20-50%): Potential issue, idea, or stylistic improvement
+
+**CONFIDENCE APPROACH**: Include suggestions even with medium/low confidence - filtering will handle quality control.
 
 VERIFICATION CHECKLIST:
-✅ Each issue has a clear business impact
-✅ Solutions are production-ready and complete
-✅ Root causes are properly identified
-✅ Code snippets follow best practices
+✅ Include MORE issues across all priority levels
+✅ Descriptions are concise (1-3 sentences)
+✅ Suggestions are brief (1-2 sentences)  
+✅ Code snippets only for critical/high priority or complex fixes
 ✅ Line numbers match the diff exactly
-✅ Only significant issues are reported
+✅ Issues span from critical problems to stylistic improvements
 
-Focus on finding the types of issues that could cause real problems in production - the kind that experienced architects would catch in code reviews.
+Focus on finding ALL types of issues - critical problems, improvements, ideas, and suggestions. The scoring system will handle quality filtering.
 
-If no significant issues are found, return: {"has_issues": false, "comments": []}
+If no issues are found at any level, return: {"has_issues": false, "comments": []}
 
 CRITICAL: Your response must be a complete, VALID JSON object. Do not truncate any fields. If you need to shorten content due to length constraints, prioritize completing the JSON structure over detailed descriptions.
 `
@@ -503,4 +524,118 @@ Code changes to analyze:
 <diff>
 %s
 </diff>
+`
+
+// *** Issue Scoring Prompts ***
+
+var scoringSystemPromptTemplate = `
+You are an expert code review quality assessor with deep experience in filtering high-quality code review feedback from noise.
+
+Your task is to score individual code review comments to determine their value and relevance, enabling filtering of low-quality, irrelevant, or "spammy" feedback that could clutter the review process.
+
+CORE RESPONSIBILITIES:
+1. Assess the overall quality and value of each review comment
+2. Evaluate the severity, confidence, relevance, and actionability of issues
+3. Identify comments that should be filtered out to prevent noise
+4. Consider the business impact and technical significance of each issue
+
+SCORING DIMENSIONS (all scores from 0.0 to 1.0):
+
+**SEVERITY SCORE** (0.0 = info, 1.0 = critical):
+- 0.8-1.0: Critical security vulnerabilities, system failures, data corruption
+- 0.6-0.8: High-impact bugs, performance issues, architecture violations
+- 0.4-0.6: Medium-impact maintainability issues, minor bugs
+- 0.2-0.4: Low-impact style issues, minor improvements
+- 0.0-0.2: Trivial suggestions, personal preferences
+
+**CONFIDENCE SCORE** (0.0 = low confidence, 1.0 = high confidence):
+- 0.8-1.0: Definite issue with clear evidence in the code
+- 0.6-0.8: Very likely issue based on patterns and best practices
+- 0.4-0.6: Probable issue but may depend on context
+- 0.2-0.4: Possible issue but uncertain without more context
+- 0.0-0.2: Speculative or uncertain feedback
+
+**RELEVANCE SCORE** (0.0 = not relevant, 1.0 = highly relevant):
+- 0.8-1.0: Directly related to the specific changes made
+- 0.6-0.8: Related to modified code areas or immediate dependencies
+- 0.4-0.6: Somewhat related to the change context
+- 0.2-0.4: Tangentially related or broader suggestions
+- 0.0-0.2: Unrelated to the changes or general advice
+
+**ACTIONABILITY SCORE** (0.0 = vague, 1.0 = specific actionable):
+- 0.8-1.0: Specific, concrete recommendations with clear steps
+- 0.6-0.8: Clear direction with actionable guidance
+- 0.4-0.6: Some actionable elements but could be more specific
+- 0.2-0.4: Vague suggestions without clear action items
+- 0.0-0.2: Abstract feedback without actionable guidance
+
+**OVERALL SCORE CALCULATION**:
+Consider weighted importance: severity (30%), confidence (25%), relevance (25%), actionability (20%)
+
+FILTERING CRITERIA:
+Comments should be filtered (marked for removal) if:
+- Overall score < 0.3 (low-quality feedback)
+- Confidence score < 0.4 (uncertain feedback)
+- Relevance score < 0.3 (not related to changes)
+- Combination of low scores across multiple dimensions
+
+COMMON FILTER REASONS:
+- "low_confidence": AI uncertain about the issue
+- "not_relevant": Issue not related to the specific changes
+- "too_vague": Feedback lacks actionable guidance
+- "low_severity": Trivial issue not worth addressing
+- "style_preference": Personal preference rather than objective issue
+- "out_of_scope": Issue exists but beyond the scope of current changes
+
+LANGUAGE INSTRUCTIONS:
+%s
+
+Focus on identifying high-value feedback that developers should actually address while filtering out noise that would clutter the review.
+`
+
+var scoringUserPromptTemplate = `
+Analyze the following code review comments and score each one to determine if it should be filtered out to prevent review noise.
+
+CONTEXT:
+File being reviewed: %s
+
+CODE CHANGES:
+---
+%s
+---
+
+REVIEW COMMENTS TO SCORE:
+%s
+
+For each comment, provide scores across all dimensions and determine if it should be filtered.
+
+SCORING GUIDELINES:
+
+**HIGH-VALUE COMMENTS** (should NOT be filtered):
+- Address real bugs, security issues, or performance problems
+- Provide specific, actionable feedback
+- Are directly relevant to the changes made
+- Have high confidence based on visible code patterns
+
+**LOW-VALUE COMMENTS** (should be filtered):
+- Nitpicky style preferences without clear benefit
+- Vague suggestions without specific guidance
+- Issues unrelated to the specific changes
+- Uncertain feedback based on incomplete context
+- Overly generic advice
+
+OUTPUT FORMAT: Return a JSON array with one score object per comment:
+[
+  {
+    "overall_score": 0.0-1.0,
+    "severity_score": 0.0-1.0,
+    "confidence_score": 0.0-1.0,
+    "relevance_score": 0.0-1.0,
+    "actionability_score": 0.0-1.0,
+    "should_filter": true/false,
+    "filter_reason": "reason if should_filter is true"
+  }
+]
+
+CRITICAL: Your response must be a complete, VALID JSON array. Ensure you provide exactly one score object for each comment provided, in the same order.
 `
