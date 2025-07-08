@@ -3,89 +3,18 @@ server:
   endpoint: "/webhook"
   timeout: 30s
 
-# GitLab Configuration Example
 provider:
   type: "github"
-  base_url: "https://github.com"  # or your GitHub Enterprise URL
-  #token: "${GITHUB_TOKEN}"
-  #webhook_secret: "${GITHUB_WEBHOOK_SECRET}"
-  #bot_username: "your-bot-username"
-  #rate_limit_wait: 1m
+  base_url: "https://github.com"  
 
-# GitHub Configuration Example
-# provider:
-#   type: "github"  # Supported: gitlab, github, bitbucket
-#   base_url: "https://github.com"  # Leave empty for github.com, or use GitHub Enterprise URL
-#   token: "${GITHUB_TOKEN}"  # GitHub Personal Access Token or GitHub App token
-#   webhook_secret: "${GITHUB_WEBHOOK_SECRET}"  # GitHub webhook secret
-#   bot_username: "codry-bot"  # GitHub username of the bot
-#   rate_limit_wait: 1m
-
-# Bitbucket Configuration Example
-# provider:
-#   type: "bitbucket"  # Supported: gitlab, github, bitbucket
-#   base_url: "https://api.bitbucket.org"  # Leave empty for bitbucket.org, or use Bitbucket Server URL
-#   token: "${BITBUCKET_TOKEN}"  # Bitbucket App Password or OAuth token
-#   webhook_secret: "${BITBUCKET_WEBHOOK_SECRET}"  # Bitbucket webhook secret
-#   bot_username: "codry-bot"  # Bitbucket username of the bot
-#   rate_limit_wait: 1m
-
-# Gemini AI Agent Configuration (Default)
 agent:
-  type: "gemini"  # Supported: gemini, openai, claude
-  # api_key: "${GEMINI_API_KEY}"
-  model: "gemini-2.5-flash"  # or "gemini-2.5-pro-preview-06-05"
-  # proxy_url: "${GEMINI_PROXY_URL}"  # Optional
-
-# OpenAI Agent Configuration
-# agent:
-#   type: "openai"  # Supported: gemini, openai, claude
-#   api_key: "${OPENAI_API_KEY}"  # OpenAI API key (sk-...)
-#   model: "gpt-4o-mini"  # Options: gpt-4o, gpt-4o-mini, gpt-3.5-turbo, gpt-4-turbo
-#   base_url: ""  # Optional: Custom API endpoint (Azure OpenAI, local models)
-#   proxy_url: "${OPENAI_PROXY_URL}"  # Optional: Proxy URL (http://proxy:8080 or socks5://proxy:1080)
-#   max_retries: 3
-#   retry_delay: 5s
-#   temperature: 0.1
-#   max_tokens: 4000
-
-# Claude Agent Configuration
-# agent:
-#   type: "claude"  # Supported: gemini, openai, claude
-#   api_key: "${CLAUDE_API_KEY}"  # Anthropic API key
-#   model: "claude-3-5-haiku-20241022"  # Options: claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022, claude-3-opus-20240229
-#   proxy_url: "${CLAUDE_PROXY_URL}"  # Optional: Proxy URL (http://proxy:8080 or socks5://proxy:1080)
-#   max_retries: 3
-#   retry_delay: 5s
-#   temperature: 0.1
-#   max_tokens: 4000
-
-# Azure OpenAI Configuration Example
-# agent:
-#   type: "openai"
-#   api_key: "${AZURE_OPENAI_API_KEY}"
-#   model: "gpt-4o"  # Your deployment name
-#   base_url: "https://your-resource.openai.azure.com"
-#   proxy_url: "${AZURE_PROXY_URL}"  # Optional: Proxy URL
-#   max_retries: 3
-#   retry_delay: 5s
-#   temperature: 0.1
-#   max_tokens: 4000
-
-# Local LLM Configuration (OpenAI Compatible)
-# agent:
-#   type: "openai"
-#   api_key: "dummy"  # Not used for local models
-#   model: "llama3"  # Model name for your local setup
-#   base_url: "http://localhost:11434"  # Ollama or other local endpoint
-#   max_retries: 3
-#   retry_delay: 5s
-#   temperature: 0.1
-#   max_tokens: 4000
+  type: "gemini"
+  model: "gemini-2.5-flash"  
 
 review:
+  verbose: true
   file_filter:
-    max_file_size: 1000000  # Skip files larger than this (in characters)
+    max_file_size: 1000000  
     allowed_extensions:
       - ".go"
       - ".js"
@@ -124,9 +53,9 @@ review:
     include_only_code: false
   max_files_per_mr: 500
   update_description_on_mr: true
-  enable_description_generation: false
-  enable_changes_overview_generation: false
-  enable_architecture_review: false
-  enable_code_review: true
+  enable_description_generation: true
+  enable_changes_overview_generation: true
+  enable_architecture_review: true
+  enable_code_review: false
   min_files_for_description: 3
   processing_delay: 5s 

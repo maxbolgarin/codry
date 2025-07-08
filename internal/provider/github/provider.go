@@ -575,3 +575,95 @@ func (p *Provider) GetFileContent(ctx context.Context, projectID, filePath, comm
 
 	return content, nil
 }
+
+// GetComments retrieves all comments for a pull request
+func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.Comment, error) {
+	// Parse owner/repo from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+	}
+	owner, repo := parts[0], parts[1]
+
+	var allComments []*model.Comment
+
+	// Get issue comments (general PR comments)
+	issueComments, _, err := p.client.Issues.ListComments(ctx, owner, repo, mrIID, &github.IssueListCommentsOptions{})
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get issue comments from GitHub")
+	}
+
+	for _, comment := range issueComments {
+		allComments = append(allComments, &model.Comment{
+			ID:   strconv.FormatInt(comment.GetID(), 10),
+			Body: comment.GetBody(),
+			Type: model.CommentTypeGeneral,
+			Author: model.User{
+				ID:       strconv.FormatInt(comment.User.GetID(), 10),
+				Username: comment.User.GetLogin(),
+				Name:     comment.User.GetName(),
+			},
+			CreatedAt: comment.GetCreatedAt().Time,
+			UpdatedAt: comment.GetUpdatedAt().Time,
+		})
+	}
+
+	// Get review comments (line-specific comments)
+	reviewComments, _, err := p.client.PullRequests.ListComments(ctx, owner, repo, mrIID, &github.PullRequestListCommentsOptions{})
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get review comments from GitHub")
+	}
+
+	for _, comment := range reviewComments {
+		allComments = append(allComments, &model.Comment{
+			ID:       strconv.FormatInt(comment.GetID(), 10),
+			Body:     comment.GetBody(),
+			FilePath: comment.GetPath(),
+			Line:     comment.GetLine(),
+			Position: comment.GetPosition(),
+			Type:     model.CommentTypeInline,
+			Author: model.User{
+				ID:       strconv.FormatInt(comment.User.GetID(), 10),
+				Username: comment.User.GetLogin(),
+				Name:     comment.User.GetName(),
+			},
+			CreatedAt: comment.GetCreatedAt().Time,
+			UpdatedAt: comment.GetUpdatedAt().Time,
+		})
+	}
+
+	return allComments, nil
+}
+
+// UpdateComment updates an existing comment
+func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID int, commentID string, newBody string) error {
+	// Parse owner/repo from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+	}
+	owner, repo := parts[0], parts[1]
+
+	commentIDInt, err := strconv.ParseInt(commentID, 10, 64)
+	if err != nil {
+		return errm.Wrap(err, "invalid comment ID")
+	}
+
+	// Try to update as issue comment first
+	_, _, err = p.client.Issues.EditComment(ctx, owner, repo, commentIDInt, &github.IssueComment{
+		Body: &newBody,
+	})
+	if err == nil {
+		return nil
+	}
+
+	// If that fails, try to update as review comment
+	_, _, err = p.client.PullRequests.EditComment(ctx, owner, repo, commentIDInt, &github.PullRequestComment{
+		Body: &newBody,
+	})
+	if err != nil {
+		return errm.Wrap(err, "failed to update comment")
+	}
+
+	return nil
+}

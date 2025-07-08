@@ -1,6 +1,8 @@
 package prompts
 
 import (
+	"strings"
+
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/logze/v2"
 )
@@ -201,6 +203,10 @@ func (lch ListOfChangesHeaders) GetByType(t model.FileChangeType) string {
 }
 
 func (dh CodeReviewHeaders) GetByType(t model.IssueType) string {
+	if contains(string(t), "reliability", "style") {
+		return dh.RefactorSuggestionHeader
+	}
+
 	switch t {
 	case model.IssueTypeCritical:
 		return dh.CriticalIssueHeader
@@ -215,6 +221,7 @@ func (dh CodeReviewHeaders) GetByType(t model.IssueType) string {
 	case model.IssueTypeOther:
 		return dh.OtherIssueHeader
 	}
+
 	logze.Warn("unknown issue type", "issue_type", t)
 	return dh.OtherIssueHeader
 }
@@ -247,4 +254,13 @@ func (dh CodeReviewHeaders) GetPriority(s model.ReviewPriority) string {
 	}
 	logze.Warn("unknown priority", "priority", s)
 	return dh.PriorityMedium
+}
+
+func contains(item string, slice ...string) bool {
+	for _, s := range slice {
+		if strings.Contains(strings.ToLower(item), strings.ToLower(s)) {
+			return true
+		}
+	}
+	return false
 }

@@ -6,6 +6,17 @@ import (
 	"github.com/maxbolgarin/codry/internal/model"
 )
 
+const (
+	startMarkerDesc = "<!-- Codry: ai-desc-start -->"
+	endMarkerDesc   = "<!-- Codry: ai-desc-end -->"
+
+	startMarkerOverview = "<!-- Codry: ai-overview-start -->"
+	endMarkerOverview   = "<!-- Codry: ai-overview-end -->"
+
+	startMarkerArchitecture = "<!-- Codry: ai-architecture-start -->"
+	endMarkerArchitecture   = "<!-- Codry: ai-architecture-end -->"
+)
+
 type Config struct {
 	FileFilter             FileFilter    `yaml:"file_filter"`
 	MaxFilesPerMR          int           `yaml:"max_files_per_mr" env:"REVIEW_MAX_FILES_PER_MR"`

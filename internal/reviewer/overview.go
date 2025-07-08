@@ -17,37 +17,90 @@ func (s *Reviewer) generateChangesOverview(ctx context.Context, bundle *reviewBu
 		bundle.log.InfoIf(s.cfg.Verbose, "changes overview generation is disabled, skipping")
 		return
 	}
-	bundle.log.DebugIf(s.cfg.Verbose, "generating changes overview")
+	bundle.log.Debug("generating changes overview")
 
-	err := s.createChangesOverview(ctx, bundle.request, bundle.fullDiffString)
+	err := s.createOrUpdateChangesOverview(ctx, bundle.request, bundle.fullDiffString)
 	if err != nil {
 		msg := "failed to generate changes overview"
-		bundle.log.Error(msg, "error", err)
+		bundle.log.Err(err, msg)
 		bundle.result.Errors = append(bundle.result.Errors, errm.Wrap(err, msg))
 		return
 	}
 
-	bundle.log.InfoIf(s.cfg.Verbose, "generated and created changes overview comment")
+	bundle.log.InfoIf(s.cfg.Verbose, "generated and updated changes overview comment")
 
 	bundle.result.IsChangesOverviewCreated = true
 }
 
-func (s *Reviewer) createChangesOverview(ctx context.Context, request model.ReviewRequest, fullDiff string) error {
+func (s *Reviewer) createOrUpdateChangesOverview(ctx context.Context, request model.ReviewRequest, fullDiff string) error {
 	changes, err := s.agent.GenerateChangesOverview(ctx, fullDiff)
 	if err != nil {
 		return errm.Wrap(err, "failed to generate changes overview")
 	}
 
-	// Update description with changes section
+	// Create the new comment content
 	newComment := s.createCommentWithChangesOverview(changes, request.Changes)
 
-	// Update MR description
-	err = s.provider.CreateComment(ctx, request.ProjectID, request.MergeRequest.IID, newComment)
+	// Wrap the overview content with markers
+	wrappedContent := s.wrapOverviewContent(newComment.Body)
+
+	// Check for existing changes overview comment
+	existingComment, err := s.findExistingChangesOverviewComment(ctx, request.ProjectID, request.MergeRequest.IID)
 	if err != nil {
-		return errm.Wrap(err, "failed to create comment")
+		return errm.Wrap(err, "failed to check for existing changes overview comment")
+	}
+
+	if existingComment != nil {
+		// Update existing comment
+		err = s.provider.UpdateComment(ctx, request.ProjectID, request.MergeRequest.IID, existingComment.ID, wrappedContent)
+		if err != nil {
+			return errm.Wrap(err, "failed to update existing changes overview comment")
+		}
+	} else {
+		// Create new comment with wrapped content
+		newComment.Body = wrappedContent
+		err = s.provider.CreateComment(ctx, request.ProjectID, request.MergeRequest.IID, newComment)
+		if err != nil {
+			return errm.Wrap(err, "failed to create comment")
+		}
 	}
 
 	return nil
+}
+
+// wrapOverviewContent wraps the overview content with markers
+func (s *Reviewer) wrapOverviewContent(content string) string {
+	var result strings.Builder
+	result.Grow(len(content) + len(startMarkerOverview) + len(endMarkerOverview) + 4)
+
+	result.WriteString(startMarkerOverview)
+	result.WriteString("\n")
+	result.WriteString(content)
+	result.WriteString("\n")
+	result.WriteString(endMarkerOverview)
+
+	return result.String()
+}
+
+// findExistingChangesOverviewComment finds an existing changes overview comment by the bot
+func (s *Reviewer) findExistingChangesOverviewComment(ctx context.Context, projectID string, mrIID int) (*model.Comment, error) {
+	comments, err := s.provider.GetComments(ctx, projectID, mrIID)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get comments")
+	}
+
+	for _, comment := range comments {
+		if s.isChangesOverviewComment(comment.Body) {
+			return comment, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// isChangesOverviewComment checks if a comment body contains overview markers
+func (s *Reviewer) isChangesOverviewComment(body string) bool {
+	return strings.Contains(body, startMarkerOverview) && strings.Contains(body, endMarkerOverview)
 }
 
 func (s *Reviewer) createCommentWithChangesOverview(files []model.FileChangeInfo, changes []*model.FileDiff) *model.Comment {
@@ -121,13 +174,16 @@ func formatDiffStats(stats diffStats) string {
 		return "No changes"
 	}
 
-	var parts []string
+	result := ""
 	if stats.plusLines > 0 {
-		parts = append(parts, fmt.Sprintf("+%d", stats.plusLines))
+		result += fmt.Sprintf("+%d", stats.plusLines)
 	}
 	if stats.minusLines > 0 {
-		parts = append(parts, fmt.Sprintf("-%d", stats.minusLines))
+		if result != "" {
+			result += "/"
+		}
+		result += fmt.Sprintf("-%d", stats.minusLines)
 	}
 
-	return strings.Join(parts, " ")
+	return result
 }

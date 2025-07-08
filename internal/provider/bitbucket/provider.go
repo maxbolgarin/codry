@@ -580,3 +580,87 @@ func (p *Provider) GetFileContent(ctx context.Context, projectID, filePath, comm
 
 	return string(resp.Body()), nil
 }
+
+// GetComments retrieves all comments for a pull request
+func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.Comment, error) {
+	// Parse workspace/repo_slug from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+	}
+	workspace, repoSlug := parts[0], parts[1]
+
+	// Build API URL
+	apiURL := fmt.Sprintf("repositories/%s/%s/pullrequests/%d/comments", workspace, repoSlug, mrIID)
+
+	var response struct {
+		Values []bitbucketComment `json:"values"`
+	}
+
+	_, err := p.client.Get(ctx, apiURL, &response)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get comments from Bitbucket")
+	}
+
+	var allComments []*model.Comment
+
+	for _, comment := range response.Values {
+		modelComment := &model.Comment{
+			ID:   strconv.Itoa(comment.ID),
+			Body: comment.Content.Raw,
+			Author: model.User{
+				ID:       comment.User.UUID,
+				Username: comment.User.Username,
+				Name:     comment.User.DisplayName,
+			},
+		}
+
+		// Parse timestamps
+		if createdAt, err := time.Parse(time.RFC3339, comment.CreatedOn); err == nil {
+			modelComment.CreatedAt = createdAt
+		}
+		if updatedAt, err := time.Parse(time.RFC3339, comment.UpdatedOn); err == nil {
+			modelComment.UpdatedAt = updatedAt
+		}
+
+		// Determine comment type based on inline data
+		if comment.Inline.Path != "" {
+			modelComment.Type = model.CommentTypeInline
+			modelComment.FilePath = comment.Inline.Path
+			modelComment.Line = comment.Inline.To
+		} else {
+			modelComment.Type = model.CommentTypeGeneral
+		}
+
+		allComments = append(allComments, modelComment)
+	}
+
+	return allComments, nil
+}
+
+// UpdateComment updates an existing comment
+func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID int, commentID string, newBody string) error {
+	// Parse workspace/repo_slug from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+	}
+	workspace, repoSlug := parts[0], parts[1]
+
+	// Build API URL
+	apiURL := fmt.Sprintf("repositories/%s/%s/pullrequests/%d/comments/%s", workspace, repoSlug, mrIID, commentID)
+
+	// Prepare update data
+	updateData := map[string]any{
+		"content": map[string]any{
+			"raw": newBody,
+		},
+	}
+
+	_, err := p.client.Put(ctx, apiURL, updateData)
+	if err != nil {
+		return errm.Wrap(err, "failed to update comment")
+	}
+
+	return nil
+}

@@ -111,8 +111,6 @@ github.com/maxbolgarin/errm v1.1.0 h1:qiTDulofC/wwYtnmos7bMq543A2Xc0nCq4uygCKH08
 github.com/maxbolgarin/errm v1.1.0/go.mod h1:LnWsu1KC3e3QIh5GqjQGRr3Fe33HYEKqisU4Qoo5QpY=
 github.com/maxbolgarin/lang v1.9.0 h1:jnRcqN0j/rDv2vJ188LMcSgsEKzNofJEgcla0n3DQpY=
 github.com/maxbolgarin/lang v1.9.0/go.mod h1:gZyHWP6Odm4E4ow7ebyaD7TCoZsuQyXh30zk8g7lmXc=
-github.com/maxbolgarin/logze/v2 v2.3.0 h1:Nz3OwL0Hpnnl3PLJ82hYUkTH9jZNJmW9oFjuNmU61bE=
-github.com/maxbolgarin/logze/v2 v2.3.0/go.mod h1:8B7Ovyhr4llPdHS5RVubx+Bzl5lFIXZUQPQ1Z6F+3fQ=
 github.com/maxbolgarin/logze/v2 v2.4.0 h1:y4pGlvcjp/+4Q5i7ueu0/aIwYyeLNLEIACd2af2gQvY=
 github.com/maxbolgarin/logze/v2 v2.4.0/go.mod h1:FOGslT0xFeNQtdO18Eugm3fGZwb/v3qGSsG8LajON+U=
 github.com/maxbolgarin/servex/v2 v2.2.0 h1:jtXrp8Mly5SKrD/S9NxMOGSPTlz2gvzHgDjMNhzmBHQ=
@@ -125,7 +123,6 @@ github.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjY
 github.com/panjf2000/ants/v2 v2.11.3 h1:AfI0ngBoXJmYOpDh9m516vjqoUu2sLrIVgppI9TZVpg=
 github.com/panjf2000/ants/v2 v2.11.3/go.mod h1:8u92CYMUc6gyvTIw8Ru7Mt7+/ESnJahz5EVtqfrilek=
 github.com/pkg/diff v0.0.0-20210226163009-20ebb0f2a09e/go.mod h1:pJLUxLENpZxwdsKMEsNbx1VGcRFpLqf3715MtcvvzbA=
-github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=

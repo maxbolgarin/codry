@@ -151,6 +151,8 @@ func (tb *Builder) BuildEnhancedReviewPrompt(filename string, enhancedCtx *Enhan
 	// Build enhanced context section
 	contextSection := tb.buildContextSection(enhancedCtx)
 
+	fmt.Println(filename, contextSection)
+
 	userPrompt := fmt.Sprintf(structuredReviewUserPromptTemplate,
 		contextSection,
 		filename,
@@ -180,7 +182,7 @@ func (tb *Builder) buildContextSection(ctx *EnhancedContext) string {
 		contextBuilder.WriteString("\n")
 	}
 
-	// Function signatures
+	// Function signatures with enhanced information
 	if len(ctx.FunctionSignatures) > 0 {
 		contextBuilder.WriteString("### 🔧 FUNCTION SIGNATURES:\n")
 		for _, fn := range ctx.FunctionSignatures {
@@ -188,12 +190,19 @@ func (tb *Builder) buildContextSection(ctx *EnhancedContext) string {
 			if fn.IsExported {
 				exported = " (exported)"
 			}
-			contextBuilder.WriteString(fmt.Sprintf("- %s%s\n", fn.Name, exported))
+			contextBuilder.WriteString(fmt.Sprintf("- **%s**%s", fn.Name, exported))
+			if len(fn.Parameters) > 0 {
+				contextBuilder.WriteString(fmt.Sprintf(" - params: %s", strings.Join(fn.Parameters, ", ")))
+			}
+			if len(fn.Returns) > 0 {
+				contextBuilder.WriteString(fmt.Sprintf(" - returns: %s", strings.Join(fn.Returns, ", ")))
+			}
+			contextBuilder.WriteString("\n")
 		}
 		contextBuilder.WriteString("\n")
 	}
 
-	// Type definitions
+	// Type definitions with enhanced information
 	if len(ctx.TypeDefinitions) > 0 {
 		contextBuilder.WriteString("### 🏗️ TYPE DEFINITIONS:\n")
 		for _, typedef := range ctx.TypeDefinitions {
@@ -201,54 +210,84 @@ func (tb *Builder) buildContextSection(ctx *EnhancedContext) string {
 			if typedef.IsExported {
 				exported = " (exported)"
 			}
-			contextBuilder.WriteString(fmt.Sprintf("- %s %s%s\n", typedef.Name, typedef.Type, exported))
+			contextBuilder.WriteString(fmt.Sprintf("- **%s** %s%s", typedef.Name, typedef.Type, exported))
+			if len(typedef.Fields) > 0 {
+				contextBuilder.WriteString(fmt.Sprintf(" - fields: %s", strings.Join(typedef.Fields, ", ")))
+			}
+			if len(typedef.Methods) > 0 {
+				contextBuilder.WriteString(fmt.Sprintf(" - methods: %s", strings.Join(typedef.Methods, ", ")))
+			}
+			contextBuilder.WriteString("\n")
 		}
 		contextBuilder.WriteString("\n")
 	}
 
-	// Security context
+	// Enhanced security context
 	secCtx := ctx.SecurityContext
 	if secCtx.HasAuthenticationLogic || secCtx.HandlesUserInput || secCtx.AccessesDatabase ||
 		secCtx.NetworkOperations || secCtx.CryptographicOperations {
 		contextBuilder.WriteString("### 🔒 SECURITY CONTEXT:\n")
 		if secCtx.HasAuthenticationLogic {
-			contextBuilder.WriteString("⚠️ Authentication/Authorization logic detected\n")
+			contextBuilder.WriteString("🚨 **Authentication/Authorization logic detected** - Pay special attention to access controls\n")
 		}
 		if secCtx.HandlesUserInput {
-			contextBuilder.WriteString("⚠️ User input handling detected\n")
+			contextBuilder.WriteString("⚠️ **User input handling detected** - Verify input validation and sanitization\n")
 		}
 		if secCtx.AccessesDatabase {
-			contextBuilder.WriteString("⚠️ Database operations detected\n")
+			contextBuilder.WriteString("🛡️ **Database operations detected** - Check for SQL injection and data validation\n")
 		}
 		if secCtx.NetworkOperations {
-			contextBuilder.WriteString("⚠️ Network operations detected\n")
+			contextBuilder.WriteString("🌐 **Network operations detected** - Verify secure communication and error handling\n")
 		}
 		if secCtx.CryptographicOperations {
-			contextBuilder.WriteString("⚠️ Cryptographic operations detected\n")
+			contextBuilder.WriteString("🔐 **Cryptographic operations detected** - Ensure proper key management and algorithms\n")
 		}
 		contextBuilder.WriteString("\n")
 	}
 
-	// Usage patterns
+	// Usage patterns with real code examples
 	if len(ctx.UsagePatterns) > 0 {
 		contextBuilder.WriteString("### 🎯 USAGE PATTERNS:\n")
 		for _, pattern := range ctx.UsagePatterns {
-			contextBuilder.WriteString(fmt.Sprintf("- **%s**: %s\n", pattern.Pattern, pattern.BestPractice))
+			contextBuilder.WriteString(fmt.Sprintf("- **%s**: %s\n", pattern.Pattern, pattern.Description))
+
+			// Show actual code examples if available
+			if len(pattern.Examples) > 0 {
+				contextBuilder.WriteString("  ```\n")
+				for i, example := range pattern.Examples {
+					if i < 2 { // Limit to 2 examples to avoid overwhelming
+						contextBuilder.WriteString(fmt.Sprintf("  %s\n", example))
+					}
+				}
+				contextBuilder.WriteString("  ```\n")
+			}
+
+			// Add best practice guidance
+			if pattern.BestPractice != "" {
+				contextBuilder.WriteString(fmt.Sprintf("  💡 **Best Practice**: %s\n", pattern.BestPractice))
+			}
 		}
 		contextBuilder.WriteString("\n")
 	}
 
-	// Related files
+	// Related files with enhanced context
 	if len(ctx.RelatedFiles) > 0 {
 		contextBuilder.WriteString("### 🔗 RELATED FILES:\n")
 		for _, related := range ctx.RelatedFiles {
-			contextBuilder.WriteString(fmt.Sprintf("- **%s** (%s):\n```\n%s\n```\n",
-				related.Path, related.Relationship, related.Snippet))
+			relationshipIcon := tb.getRelationshipIcon(related.Relationship)
+			contextBuilder.WriteString(fmt.Sprintf("- %s **%s** (%s):\n", relationshipIcon, related.Path, related.Relationship))
+
+			// Show snippet if it's meaningful
+			if related.Snippet != "" && len(related.Snippet) < 300 {
+				contextBuilder.WriteString("```\n")
+				contextBuilder.WriteString(related.Snippet)
+				contextBuilder.WriteString("\n```\n")
+			}
 		}
 		contextBuilder.WriteString("\n")
 	}
 
-	// Semantic changes analysis
+	// Semantic changes analysis with enhanced details
 	if len(ctx.SemanticChanges) > 0 {
 		contextBuilder.WriteString("### 🧠 SEMANTIC CHANGES ANALYSIS:\n")
 		for _, change := range ctx.SemanticChanges {
@@ -261,13 +300,40 @@ func (tb *Builder) buildContextSection(ctx *EnhancedContext) string {
 			contextBuilder.WriteString(fmt.Sprintf("- %s **%s** (%s impact): %s\n",
 				impactIcon, change.Type, change.Impact, change.Description))
 			if change.Context != "" {
-				contextBuilder.WriteString(fmt.Sprintf("  Context: %s\n", change.Context))
+				contextBuilder.WriteString(fmt.Sprintf("  📋 **Context**: %s\n", change.Context))
+			}
+			if len(change.Lines) > 0 {
+				contextBuilder.WriteString(fmt.Sprintf("  📍 **Lines**: %v\n", change.Lines))
 			}
 		}
 		contextBuilder.WriteString("\n")
 	}
 
 	return contextBuilder.String()
+}
+
+// getRelationshipIcon returns an appropriate icon for the relationship type
+func (tb *Builder) getRelationshipIcon(relationship string) string {
+	switch strings.ToLower(relationship) {
+	case "dependency", "function_call", "method_call":
+		return "📞"
+	case "dependent", "dependents":
+		return "🎯"
+	case "test", "tests":
+		return "🧪"
+	case "same_package":
+		return "📦"
+	case "imports", "imported_by":
+		return "📥"
+	case "before_state":
+		return "⏪"
+	case "architecture", "architectural":
+		return "🏗️"
+	case "security":
+		return "🔒"
+	default:
+		return "📄"
+	}
 }
 
 // BuildReviewPrompt creates a prompt for structured code review with full file content and clean diff (legacy method)

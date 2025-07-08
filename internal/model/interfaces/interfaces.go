@@ -25,6 +25,8 @@ type CodeProvider interface {
 
 	// Comments
 	CreateComment(ctx context.Context, projectID string, mrIID int, comment *model.Comment) error
+	GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.Comment, error)
+	UpdateComment(ctx context.Context, projectID string, mrIID int, commentID string, newBody string) error
 
 	// GetFileContent retrieves the content of a file at a specific commit/SHA
 	GetFileContent(ctx context.Context, projectID, filePath, commitSHA string) (string, error)

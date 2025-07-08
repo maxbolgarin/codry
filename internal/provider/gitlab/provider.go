@@ -468,3 +468,99 @@ func (p *Provider) GetFileContent(ctx context.Context, projectID, filePath, comm
 
 	return file.Content, nil
 }
+
+// GetComments retrieves all comments for a merge request
+func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.Comment, error) {
+	projectIDInt, err := strconv.Atoi(projectID)
+	if err != nil {
+		return nil, errm.Wrap(err, "invalid project ID")
+	}
+
+	// Get all discussions for the merge request
+	discussions, _, err := p.client.Discussions.ListMergeRequestDiscussions(projectIDInt, mrIID, nil)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get discussions from GitLab")
+	}
+
+	var allComments []*model.Comment
+
+	for _, discussion := range discussions {
+		for _, note := range discussion.Notes {
+			comment := &model.Comment{
+				ID:   strconv.Itoa(note.ID),
+				Body: note.Body,
+				Author: model.User{
+					ID:       strconv.Itoa(note.Author.ID),
+					Username: note.Author.Username,
+					Name:     note.Author.Name,
+				},
+				CreatedAt: lang.Deref(note.CreatedAt),
+				UpdatedAt: lang.Deref(note.UpdatedAt),
+			}
+
+			// Determine comment type based on position
+			if note.Position != nil && note.Position.NewPath != "" {
+				comment.Type = model.CommentTypeInline
+				comment.FilePath = note.Position.NewPath
+				if note.Position.NewLine != 0 {
+					comment.Line = note.Position.NewLine
+				}
+			} else {
+				comment.Type = model.CommentTypeGeneral
+			}
+
+			allComments = append(allComments, comment)
+		}
+	}
+
+	return allComments, nil
+}
+
+// UpdateComment updates an existing comment
+func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID int, commentID string, newBody string) error {
+	projectIDInt, err := strconv.Atoi(projectID)
+	if err != nil {
+		return errm.Wrap(err, "invalid project ID")
+	}
+
+	// Get all discussions to find the one containing this comment
+	discussions, _, err := p.client.Discussions.ListMergeRequestDiscussions(projectIDInt, mrIID, nil)
+	if err != nil {
+		return errm.Wrap(err, "failed to get discussions from GitLab")
+	}
+
+	var discussionID string
+	var noteID int
+	found := false
+
+	// Find the discussion and note ID for the comment
+	for _, discussion := range discussions {
+		for _, note := range discussion.Notes {
+			if strconv.Itoa(note.ID) == commentID {
+				discussionID = discussion.ID
+				noteID = note.ID
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+
+	if !found {
+		return errm.New("comment not found")
+	}
+
+	// Update the note
+	updateOpts := &gitlab.UpdateMergeRequestDiscussionNoteOptions{
+		Body: &newBody,
+	}
+
+	_, _, err = p.client.Discussions.UpdateMergeRequestDiscussionNote(projectIDInt, mrIID, discussionID, noteID, updateOpts)
+	if err != nil {
+		return errm.Wrap(err, "failed to update comment")
+	}
+
+	return nil
+}

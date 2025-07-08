@@ -70,6 +70,31 @@ type bitbucketRepository struct {
 	} `json:"workspace"`
 }
 
+type bitbucketComment struct {
+	ID        int    `json:"id"`
+	CreatedOn string `json:"created_on"`
+	UpdatedOn string `json:"updated_on"`
+	Content   struct {
+		Raw    string `json:"raw"`
+		Markup string `json:"markup"`
+		HTML   string `json:"html"`
+	} `json:"content"`
+	User   bitbucketUser `json:"user"`
+	Inline struct {
+		Path string `json:"path"`
+		From int    `json:"from"`
+		To   int    `json:"to"`
+	} `json:"inline"`
+	Links struct {
+		Self struct {
+			Href string `json:"href"`
+		} `json:"self"`
+		HTML struct {
+			Href string `json:"href"`
+		} `json:"html"`
+	} `json:"links"`
+}
+
 type bitbucketPayload struct {
 	Repository  bitbucketRepository  `json:"repository"`
 	PullRequest bitbucketPullRequest `json:"pullrequest"`

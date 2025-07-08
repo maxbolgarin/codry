@@ -33,7 +33,7 @@ func (s *Reviewer) createDescription(ctx context.Context, request model.ReviewRe
 		return errm.Wrap(err, "failed to generate description")
 	}
 	if description == "" {
-		return errEmptyDescription
+		return errm.New("empty description")
 	}
 
 	// Update description with changes section
@@ -48,36 +48,31 @@ func (s *Reviewer) createDescription(ctx context.Context, request model.ReviewRe
 	return nil
 }
 
-const (
-	startMarker = "<!-- ai-desc-start -->"
-	endMarker   = "<!-- ai-desc-end -->"
-)
-
 // updateDescriptionWithAISection updates MR description with AI section
 func (s *Reviewer) updateDescriptionWithAISection(currentDescription, newAIDescription string) string {
 	var (
-		startPos = strings.Index(currentDescription, startMarker)
+		startPos = strings.Index(currentDescription, startMarkerDesc)
 		endPos   int
 
 		description = strings.Builder{}
 	)
 
 	if startPos != -1 {
-		endPos = strings.Index(currentDescription, endMarker) + len(endMarker)
+		endPos = strings.Index(currentDescription, endMarkerDesc) + len(endMarkerDesc)
 	}
 
 	// Check if AI section already exists in current description
 	if startPos != -1 && endPos != -1 {
 
-		description.Grow(len(currentDescription[:startPos]) + len(currentDescription[endPos:]) + len(newAIDescription) + len(startMarker) + len(endMarker) + 20)
+		description.Grow(len(currentDescription[:startPos]) + len(currentDescription[endPos:]) + len(newAIDescription) + len(startMarkerDesc) + len(endMarkerDesc) + 20)
 
 		// Build new description with existing content before AI section
 		description.WriteString(currentDescription[:startPos])
-		description.WriteString(startMarker)
+		description.WriteString(startMarkerDesc)
 		description.WriteString("\n")
 		description.WriteString(newAIDescription)
 		description.WriteString("\n")
-		description.WriteString(endMarker)
+		description.WriteString(endMarkerDesc)
 
 		// Add remaining content after AI section if any
 		if endPos < len(currentDescription) {
@@ -87,13 +82,13 @@ func (s *Reviewer) updateDescriptionWithAISection(currentDescription, newAIDescr
 		return description.String()
 	}
 
-	description.Grow(len(currentDescription) + len(newAIDescription) + len(startMarker) + len(endMarker) + 20)
+	description.Grow(len(currentDescription) + len(newAIDescription) + len(startMarkerDesc) + len(endMarkerDesc) + 20)
 
-	description.WriteString(startMarker)
+	description.WriteString(startMarkerDesc)
 	description.WriteString("\n")
 	description.WriteString(newAIDescription)
 	description.WriteString("\n")
-	description.WriteString(endMarker)
+	description.WriteString(endMarkerDesc)
 
 	if currentDescription == "" {
 		return description.String()

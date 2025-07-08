@@ -120,7 +120,7 @@ func (s *Reviewer) filterFilesForReview(request model.ReviewRequest, log logze.L
 			continue
 		}
 
-		log.Debug("adding to review", "file", file.NewPath)
+		log.DebugIf(s.cfg.Verbose, "adding to review", "file", file.NewPath)
 		filtered = append(filtered, file)
 
 		// Count diff string total size
@@ -181,6 +181,6 @@ func (s *Reviewer) logProcessingResults(result model.ReviewResult, timer abstrac
 
 	log.Error("review completed with errors", "error_count", len(result.Errors))
 	for _, err := range result.Errors {
-		log.ErrorIf(s.cfg.Verbose, "processing error", err)
+		log.Err(err, "processing error")
 	}
 }
