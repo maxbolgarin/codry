@@ -15,11 +15,11 @@ require (
 	github.com/maxbolgarin/logze/v2 v2.4.0
 	github.com/maxbolgarin/servex/v2 v2.2.0
 	github.com/panjf2000/ants/v2 v2.11.3
+	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	gitlab.158-160-60-159.sslip.io/astra-monitoring-icl/go-lib v0.0.0-20250523142741-e4a551d67e5c
 	gitlab.com/gitlab-org/api/client-go v0.129.0
 	golang.org/x/oauth2 v0.30.0
 	google.golang.org/genai v1.10.0
-	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -62,5 +62,6 @@ require (
 	google.golang.org/grpc v1.66.2 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	olympos.io/encoding/edn v0.0.0-20201019073823-d3554ca0b0a3 // indirect
 )
