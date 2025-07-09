@@ -1,4 +1,4 @@
-package ast
+package astparser
 
 import (
 	"context"
@@ -80,8 +80,8 @@ type NodePosition struct {
 	EndColumn   int
 }
 
-// newASTParser creates a new AST parser with supported languages
-func newASTParser() *Parser {
+// NewParser creates a new AST parser with supported languages
+func NewParser() *Parser {
 	languages := make(map[ProgrammingLanguage]*sitter.Language, len(languagesParsers))
 	for name, parser := range languagesParsers {
 		languages[name] = parser
@@ -146,8 +146,8 @@ func (p *Parser) findSmallestEnclosingNodeRecursive(node *sitter.Node, lineNumbe
 	return node
 }
 
-// findAffectedSymbols finds all symbols affected by changes in the given lines
-func (p *Parser) findAffectedSymbols(ctx context.Context, filePath, content string, changedLines []int) ([]AffectedSymbol, error) {
+// FindAffectedSymbols finds all symbols affected by changes in the given lines
+func (p *Parser) FindAffectedSymbols(ctx context.Context, filePath, content string, changedLines []int) ([]AffectedSymbol, error) {
 	rootNode, err := p.ParseFileToAST(ctx, filePath, content)
 	if err != nil {
 		return nil, errm.Wrap(err, "failed to parse file to AST", "file", filePath)
@@ -169,7 +169,7 @@ func (p *Parser) findAffectedSymbols(ctx context.Context, filePath, content stri
 			continue
 		}
 
-		symbol := p.extractSymbolFromNode(symbolNode, filePath, content)
+		symbol := p.ExtractSymbolFromNode(symbolNode, filePath, content)
 		if symbol.Name == "" {
 			continue
 		}
@@ -193,7 +193,7 @@ func (p *Parser) findParentSymbolNode(node *sitter.Node) *sitter.Node {
 		nodeType := current.Type()
 
 		// Check if this node represents a symbol we're interested in
-		if p.isSymbolNode(nodeType) {
+		if p.IsSymbolNode(nodeType) {
 			return current
 		}
 
@@ -203,39 +203,13 @@ func (p *Parser) findParentSymbolNode(node *sitter.Node) *sitter.Node {
 	return nil
 }
 
-// isSymbolNode checks if a node type represents a code symbol we're interested in
-func (p *Parser) isSymbolNode(nodeType string) bool {
-	symbolNodes := map[string]bool{
-		// Go
-		"function_declaration": true,
-		"method_declaration":   true,
-		"type_declaration":     true,
-		"var_declaration":      true,
-		"const_declaration":    true,
-		"interface_type":       true,
-		"struct_type":          true,
-
-		// JavaScript/TypeScript
-		"function_expression":    true,
-		"arrow_function":         true,
-		"method_definition":      true,
-		"class_declaration":      true,
-		"variable_declaration":   true,
-		"interface_declaration":  true,
-		"type_alias_declaration": true,
-
-		// Python
-		"function_def":       true,
-		"async_function_def": true,
-		"class_def":          true,
-		"assignment":         true,
-	}
-
+// IsSymbolNode checks if a node type represents a code symbol we're interested in
+func (p *Parser) IsSymbolNode(nodeType string) bool {
 	return symbolNodes[nodeType]
 }
 
-// extractSymbolFromNode extracts symbol information from an AST node
-func (p *Parser) extractSymbolFromNode(node *sitter.Node, filePath, content string) AffectedSymbol {
+// ExtractSymbolFromNode extracts symbol information from an AST node
+func (p *Parser) ExtractSymbolFromNode(node *sitter.Node, filePath, content string) AffectedSymbol {
 	symbol := AffectedSymbol{
 		FilePath:  filePath,
 		StartLine: int(node.StartPoint().Row) + 1, // Convert to 1-based
@@ -247,41 +221,93 @@ func (p *Parser) extractSymbolFromNode(node *sitter.Node, filePath, content stri
 
 	// Extract symbol name and type based on AST node type
 	switch nodeType {
-	case "function_declaration", "function_def", "async_function_def":
+	// Functions across languages
+	case "function_declaration", "function_def", "function_definition", "function_expression", "arrow_function", "func_literal":
 		symbol.Type = SymbolTypeFunction
 		symbol.Name = p.extractFunctionName(node, content)
 		symbol.Parameters = p.extractFunctionParameters(node, content)
-		symbol.ReturnType = p.extractReturnType(node, content)
+		symbol.ReturnType = p.extractGoReturnType(node, content)
+		fmt.Println(filePath, symbol.StartLine, symbol.EndLine, symbol.Type, symbol.Name, symbol.Parameters, symbol.ReturnType)
 
+	// Methods across languages
 	case "method_declaration", "method_definition":
 		symbol.Type = SymbolTypeMethod
 		symbol.Name = p.extractFunctionName(node, content)
-		symbol.Parameters = p.extractFunctionParameters(node, content)
-		symbol.ReturnType = p.extractReturnType(node, content)
+		// Use special method for Go method parameters to include receiver
+		if nodeType == "method_declaration" {
+			symbol.Parameters = p.extractGoMethodParameters(node, content)
+		} else {
+			symbol.Parameters = p.extractFunctionParameters(node, content)
+		}
+		symbol.ReturnType = p.extractGoReturnType(node, content)
 
-	case "class_declaration", "class_def":
+	// Classes across languages
+	case "class_declaration", "class_definition":
 		symbol.Type = SymbolTypeClass
 		symbol.Name = p.extractClassName(node, content)
 
-	case "type_declaration":
+	// Types and specifications
+	case "type_declaration", "type_spec", "type_alias_declaration":
 		symbol.Type = SymbolTypeType
 		symbol.Name = p.extractTypeName(node, content)
 
-	case "struct_type":
+	// Structs and similar constructs
+	case "struct_type", "struct_specifier", "union_specifier", "enum_specifier", "class_specifier":
 		symbol.Type = SymbolTypeStruct
 		symbol.Name = p.extractStructName(node, content)
 
+	// Interfaces
 	case "interface_type", "interface_declaration":
 		symbol.Type = SymbolTypeInterface
 		symbol.Name = p.extractInterfaceName(node, content)
 
-	case "var_declaration", "variable_declaration", "assignment":
+	// Variables and assignments
+	case "var_declaration", "var_spec", "variable_declaration", "variable_declarator", "assignment", "field_declaration", "local_variable_declaration", "declaration", "declarator":
 		symbol.Type = SymbolTypeVariable
 		symbol.Name = p.extractVariableName(node, content)
 
-	case "const_declaration":
+	// Constants
+	case "const_declaration", "const_spec":
 		symbol.Type = SymbolTypeConstant
 		symbol.Name = p.extractConstantName(node, content)
+
+	// Enums
+	case "enum_declaration":
+		symbol.Type = SymbolTypeType
+		symbol.Name = p.extractTypeName(node, content)
+
+	// Constructors
+	case "constructor_declaration":
+		symbol.Type = SymbolTypeMethod
+		symbol.Name = p.extractFunctionName(node, content)
+		symbol.Parameters = p.extractFunctionParameters(node, content)
+
+	// Method specifications (Go interfaces)
+	case "method_spec":
+		symbol.Type = SymbolTypeMethod
+		symbol.Name = p.extractFunctionName(node, content)
+		symbol.Parameters = p.extractFunctionParameters(node, content)
+		symbol.ReturnType = p.extractGoReturnType(node, content)
+
+	// Namespace and module declarations
+	case "namespace_declaration", "module_declaration":
+		symbol.Type = SymbolTypePackage
+		symbol.Name = p.extractFunctionName(node, content)
+
+	// Import and export statements
+	case "import_statement", "export_statement":
+		symbol.Type = SymbolTypeImport
+		symbol.Name = p.extractFunctionName(node, content)
+
+	// Lexical declarations (let, const in JS/TS)
+	case "lexical_declaration":
+		symbol.Type = SymbolTypeVariable
+		symbol.Name = p.extractVariableName(node, content)
+
+	// Declaration lists and parameter declarations
+	case "declaration_list", "parameter_declaration":
+		symbol.Type = SymbolTypeVariable
+		symbol.Name = p.extractVariableName(node, content)
 
 	default:
 		symbol.Type = SymbolTypeUnknown
@@ -359,8 +385,14 @@ func (p *Parser) extractConstantName(node *sitter.Node, content string) string {
 func (p *Parser) extractFunctionParameters(node *sitter.Node, content string) []Parameter {
 	var parameters []Parameter
 
-	// Find parameter list node
-	paramListNode := p.findChildByType(node, "parameter_list")
+	// First try Go-style field lookup for 'parameters' field
+	paramListNode := p.findChildByFieldName(node, "parameters")
+	if paramListNode != nil {
+		return p.extractParametersFromList(paramListNode, content)
+	}
+
+	// Fallback: Find parameter list node by type (for other languages)
+	paramListNode = p.findChildByType(node, "parameter_list")
 	if paramListNode == nil {
 		paramListNode = p.findChildByType(node, "parameters")
 	}
@@ -526,6 +558,260 @@ func (p *Parser) extractFunctionCall(node *sitter.Node, content string) Function
 	return call
 }
 
+// extractGoReturnType extracts the return type from a Go function or method declaration
+func (p *Parser) extractGoReturnType(node *sitter.Node, content string) string {
+	// In Go grammar, the return type is in the 'result' field of function_declaration/method_declaration
+	// result: optional(choice($.parameter_list, $._simple_type))
+
+	// Look for the 'result' field directly on the function/method declaration node
+	resultNode := p.findChildByFieldName(node, "result")
+	if resultNode != nil {
+		return p.getNodeText(resultNode, content)
+	}
+
+	// Fallback: look for child nodes that could be return types
+	childCount := int(node.ChildCount())
+	foundParams := false
+
+	for i := 0; i < childCount; i++ {
+		child := node.Child(i)
+		if child == nil {
+			continue
+		}
+
+		childType := child.Type()
+
+		// Mark that we found parameters
+		if childType == "parameter_list" {
+			if foundParams {
+				// If we already found parameter_list (the function parameters),
+				// the next parameter_list is likely the return parameters
+				return p.getNodeText(child, content)
+			}
+			foundParams = true
+			continue
+		}
+
+		// If we found params and now see a type, it's likely the return type
+		if foundParams && (childType == "type_identifier" || childType == "primitive_type" ||
+			childType == "pointer_type" || childType == "slice_type" ||
+			childType == "array_type" || childType == "map_type" ||
+			childType == "channel_type" || childType == "interface_type" ||
+			childType == "struct_type" || childType == "function_type" ||
+			childType == "qualified_type" || childType == "generic_type") {
+			return p.getNodeText(child, content)
+		}
+	}
+
+	return ""
+}
+
+// extractGoMethodParameters extracts parameters from a Go method declaration
+func (p *Parser) extractGoMethodParameters(node *sitter.Node, content string) []Parameter {
+	var parameters []Parameter
+
+	// First, extract receiver information for Go methods
+	// In Go grammar: field('receiver', $.parameter_list)
+	receiverNode := p.findChildByFieldName(node, "receiver")
+	if receiverNode != nil {
+		// Extract receiver parameter with type
+		receiverParams := p.extractParametersFromList(receiverNode, content)
+		parameters = append(parameters, receiverParams...)
+	}
+
+	// Then extract regular function parameters
+	// In Go grammar: field('parameters', $.parameter_list)
+	paramListNode := p.findChildByFieldName(node, "parameters")
+	if paramListNode != nil {
+		// Extract regular parameters
+		regularParams := p.extractParametersFromList(paramListNode, content)
+		parameters = append(parameters, regularParams...)
+	}
+
+	return parameters
+}
+
+// extractParametersFromList extracts parameters from a parameter_list node
+func (p *Parser) extractParametersFromList(paramListNode *sitter.Node, content string) []Parameter {
+	var parameters []Parameter
+
+	childCount := int(paramListNode.ChildCount())
+	for i := 0; i < childCount; i++ {
+		child := paramListNode.Child(i)
+		if child == nil {
+			continue
+		}
+
+		childType := child.Type()
+		if childType == "parameter_declaration" || childType == "variadic_parameter_declaration" {
+			// Extract parameter(s) from this declaration
+			params := p.extractGoParameterDeclaration(child, content)
+			parameters = append(parameters, params...)
+		}
+	}
+
+	return parameters
+}
+
+// extractGoParameterDeclaration extracts all parameters from a single Go parameter declaration
+// Handles cases like: (a, b int) where multiple names share one type
+func (p *Parser) extractGoParameterDeclaration(node *sitter.Node, content string) []Parameter {
+	var parameters []Parameter
+
+	// Try to get names and type using field names
+	namesNode := p.findChildByFieldName(node, "name")
+	typeNode := p.findChildByFieldName(node, "type")
+
+	var names []string
+	var typeStr string
+
+	if typeNode != nil {
+		typeStr = p.getNodeText(typeNode, content)
+	}
+
+	if namesNode != nil {
+		// Extract all identifier names from the names node
+		names = p.extractIdentifierNames(namesNode, content)
+	}
+
+	// If field-based extraction didn't work, fall back to child traversal
+	if len(names) == 0 || typeStr == "" {
+		childCount := int(node.ChildCount())
+		for i := 0; i < childCount; i++ {
+			child := node.Child(i)
+			if child == nil {
+				continue
+			}
+
+			childType := child.Type()
+			if childType == "identifier" && len(names) == 0 {
+				names = append(names, p.getNodeText(child, content))
+			} else if typeStr == "" && (childType == "type_identifier" || childType == "primitive_type" ||
+				childType == "pointer_type" || childType == "slice_type" ||
+				childType == "array_type" || childType == "map_type" ||
+				childType == "channel_type" || childType == "interface_type" ||
+				childType == "struct_type" || childType == "function_type" ||
+				childType == "qualified_type" || childType == "generic_type") {
+				typeStr = p.getNodeText(child, content)
+			}
+		}
+	}
+
+	// Create parameter entries
+	for _, name := range names {
+		parameters = append(parameters, Parameter{
+			Name: name,
+			Type: typeStr,
+		})
+	}
+
+	// If no names were found but we have a type, create unnamed parameter
+	if len(names) == 0 && typeStr != "" {
+		parameters = append(parameters, Parameter{
+			Name: "",
+			Type: typeStr,
+		})
+	}
+
+	return parameters
+}
+
+// extractIdentifierNames extracts all identifier names from a node (handles comma-separated lists)
+func (p *Parser) extractIdentifierNames(node *sitter.Node, content string) []string {
+	var names []string
+
+	// If this node is itself an identifier
+	if node.Type() == "identifier" {
+		return []string{p.getNodeText(node, content)}
+	}
+
+	// Otherwise, traverse children to find identifiers
+	childCount := int(node.ChildCount())
+	for i := 0; i < childCount; i++ {
+		child := node.Child(i)
+		if child != nil && child.Type() == "identifier" {
+			names = append(names, p.getNodeText(child, content))
+		}
+	}
+
+	return names
+}
+
+// extractGoReceiver extracts receiver information from a Go method
+func (p *Parser) extractGoReceiver(receiverNode *sitter.Node, content string) Parameter {
+	param := Parameter{}
+
+	// Look for parameter declaration within receiver
+	paramDeclNode := p.findChildByType(receiverNode, "parameter_declaration")
+	if paramDeclNode != nil {
+		return p.extractGoParameter(paramDeclNode, content)
+	}
+
+	// Fallback: extract directly from receiver node
+	childCount := int(receiverNode.ChildCount())
+	for i := 0; i < childCount; i++ {
+		child := receiverNode.Child(i)
+		if child == nil {
+			continue
+		}
+
+		childType := child.Type()
+		if childType == "identifier" && param.Name == "" {
+			param.Name = p.getNodeText(child, content)
+		} else if (childType == "type_identifier" || childType == "pointer_type" ||
+			childType == "struct_type") && param.Type == "" {
+			param.Type = p.getNodeText(child, content)
+		}
+	}
+
+	return param
+}
+
+// extractGoParameter extracts a single parameter from a Go parameter node
+func (p *Parser) extractGoParameter(node *sitter.Node, content string) Parameter {
+	param := Parameter{}
+
+	// In Go grammar, parameter_declaration has:
+	// field('name', commaSep($.identifier)) and field('type', $._type)
+
+	// First try to get name and type from field names
+	nameNode := p.findChildByFieldName(node, "name")
+	typeNode := p.findChildByFieldName(node, "type")
+
+	if nameNode != nil {
+		param.Name = p.getNodeText(nameNode, content)
+	}
+
+	if typeNode != nil {
+		param.Type = p.getNodeText(typeNode, content)
+	}
+
+	// If field names didn't work, fall back to child node types
+	if param.Name == "" || param.Type == "" {
+		childCount := int(node.ChildCount())
+		for i := 0; i < childCount; i++ {
+			child := node.Child(i)
+			if child == nil {
+				continue
+			}
+
+			childType := child.Type()
+			if childType == "identifier" && param.Name == "" {
+				param.Name = p.getNodeText(child, content)
+			} else if (childType == "type_identifier" || childType == "primitive_type" ||
+				childType == "pointer_type" || childType == "slice_type" ||
+				childType == "array_type" || childType == "map_type" ||
+				childType == "channel_type" || childType == "interface_type" ||
+				childType == "struct_type" || childType == "function_type" ||
+				childType == "qualified_type" || childType == "generic_type") && param.Type == "" {
+				param.Type = p.getNodeText(child, content)
+			}
+		}
+	}
+
+	return param
+}
+
 // Helper methods
 
 // findChildByType finds the first child node of a specific type
@@ -535,6 +821,17 @@ func (p *Parser) findChildByType(node *sitter.Node, nodeType string) *sitter.Nod
 		child := node.Child(i)
 		if child != nil && child.Type() == nodeType {
 			return child
+		}
+	}
+	return nil
+}
+
+// findChildByFieldName finds the first child node by a specific field name
+func (p *Parser) findChildByFieldName(node *sitter.Node, fieldName string) *sitter.Node {
+	childCount := int(node.ChildCount())
+	for i := 0; i < childCount; i++ {
+		if node.FieldNameForChild(i) == fieldName {
+			return node.Child(i)
 		}
 	}
 	return nil

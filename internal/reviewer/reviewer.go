@@ -8,6 +8,7 @@ import (
 	"github.com/maxbolgarin/codry/internal/agent"
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
+	"github.com/maxbolgarin/codry/internal/reviewer/astparser"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/logze/v2"
 	"github.com/panjf2000/ants/v2"
@@ -18,7 +19,7 @@ type Reviewer struct {
 	provider interfaces.CodeProvider
 	agent    *agent.Agent
 	pool     *ants.Pool
-	parser   *diffParser
+	parser   *astparser.DiffParser
 
 	cfg Config
 	log logze.Logger
@@ -31,6 +32,9 @@ type Reviewer struct {
 
 	// Context manager for gathering comprehensive MR metadata
 	contextManager *ContextManager
+
+	// Enhanced reviewer for detailed analysis
+	cbb *ContextBundleBuilder
 }
 
 // reviewTrackingInfo stores information about when an MR was reviewed
@@ -57,10 +61,11 @@ func New(cfg Config, provider interfaces.CodeProvider, agent *agent.Agent) (*Rev
 		cfg:            cfg,
 		log:            logze.With("component", "reviewer"),
 		pool:           pool,
-		parser:         newDiffParser(),
+		parser:         astparser.NewDiffParser(),
 		processedMRs:   abstract.NewSafeMapOfMaps[string, string, string](),
 		reviewedMRs:    abstract.NewSafeMap[string, reviewTrackingInfo](),
 		contextManager: NewContextManager(provider),
+		cbb:            NewContextBundleBuilder(provider),
 	}
 
 	return s, nil

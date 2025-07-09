@@ -1,4 +1,4 @@
-package ast
+package astparser
 
 import (
 	"path/filepath"
@@ -36,7 +36,7 @@ import (
 	"github.com/smacker/go-tree-sitter/toml"
 	"github.com/smacker/go-tree-sitter/typescript/tsx"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
-	"github.com/smacker/go-tree-sitter/yaml"
+	// "github.com/smacker/go-tree-sitter/yaml" // Commented out due to compilation issues with cassert header
 )
 
 type ProgrammingLanguage string
@@ -116,8 +116,8 @@ var languagesParsers = map[ProgrammingLanguage]*sitter.Language{
 	LanguageMarkdown: tree_sitter_markdown.GetLanguage(),
 
 	// Data, Config, and Query Languages
-	LanguageSQL:        sql.GetLanguage(),
-	LanguageYAML:       yaml.GetLanguage(),
+	LanguageSQL: sql.GetLanguage(),
+	// LanguageYAML:       yaml.GetLanguage(), // Commented out due to compilation issues
 	LanguageTOML:       toml.GetLanguage(),
 	LanguageCue:        cue.GetLanguage(),
 	LanguageHCL:        hcl.GetLanguage(),
@@ -302,4 +302,59 @@ func DetectProgrammingLanguage(filePath string) ProgrammingLanguage {
 
 	// If we can't determine the language, return a generic text format
 	return LanguageText
+}
+
+var symbolNodes = map[string]bool{
+	// Go
+	"function_declaration": true,
+	"method_declaration":   true,
+	"type_declaration":     true,
+	"type_spec":            true,
+	"var_declaration":      true,
+	"var_spec":             true,
+	"const_declaration":    true,
+	"const_spec":           true,
+	"interface_type":       true,
+	"struct_type":          true,
+	"func_literal":         true,
+	"method_spec":          true,
+
+	// JavaScript/TypeScript
+	"function_expression":    true,
+	"arrow_function":         true,
+	"method_definition":      true,
+	"class_declaration":      true,
+	"variable_declaration":   true,
+	"variable_declarator":    true,
+	"interface_declaration":  true,
+	"type_alias_declaration": true,
+	"enum_declaration":       true,
+	"namespace_declaration":  true,
+	"module_declaration":     true,
+	"export_statement":       true,
+	"import_statement":       true,
+	"lexical_declaration":    true,
+
+	// Python
+	"function_def":     true, // function_definition
+	"class_definition": true,
+	"assignment":       true,
+
+	// Java
+	"constructor_declaration":    true,
+	"field_declaration":          true,
+	"local_variable_declaration": true,
+
+	// C/C++
+	"function_definition": true,
+	"struct_specifier":    true,
+	"union_specifier":     true,
+	"enum_specifier":      true,
+	"class_specifier":     true,
+	"declaration":         true,
+
+	// Additional common patterns
+	"declaration_list":      true,
+	"declarator":            true,
+	"parameter_declaration": true,
 }

@@ -86,7 +86,7 @@ func (s *Reviewer) processReviewResults(ctx context.Context, request model.Revie
 	commentsCreated := 0
 
 	// Enhance comments with diff position information and set programming language
-	if err := s.parser.enhanceReviewComments(change.Diff, reviewResult.Comments); err != nil {
+	if err := s.parser.EnhanceReviewComments(change.Diff, reviewResult.Comments); err != nil {
 		log.Warn("failed to enhance comments with diff positions", "error", err)
 	}
 

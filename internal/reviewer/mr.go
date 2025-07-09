@@ -2,6 +2,7 @@ package reviewer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -45,18 +46,36 @@ func (s *Reviewer) ReviewMergeRequest(ctx context.Context, projectID string, mer
 		return errm.Wrap(err, "failed to gather MR context")
 	}
 
-	s.logFlow("MR context gathered successfully",
-		"mr_iid", mergeRequest.IID,
-		"total_files", mrContext.TotalFiles,
-		"total_commits", mrContext.TotalCommits,
-		"linked_issues", len(mrContext.LinkedIssues),
-		"linked_tickets", len(mrContext.LinkedTickets),
-		"author_comments", len(mrContext.AuthorComments),
-		"total_additions", mrContext.TotalAdditions,
-		"total_deletions", mrContext.TotalDeletions,
-	)
+	// s.logFlow("MR context gathered successfully",
+	// 	"mr_iid", mergeRequest.IID,
+	// 	"total_files", mrContext.TotalFiles,
+	// 	"total_commits", mrContext.TotalCommits,
+	// 	"linked_issues", len(mrContext.LinkedIssues),
+	// 	"linked_tickets", len(mrContext.LinkedTickets),
+	// 	"author_comments", len(mrContext.AuthorComments),
+	// 	"total_additions", mrContext.TotalAdditions,
+	// 	"total_deletions", mrContext.TotalDeletions,
+	// )
 
-	fmt.Println(mrContext.BuildContextSummary())
+	// fmt.Println(mrContext.BuildContextSummary())
+
+	rew, err := s.cbb.BuildContextBundle(ctx, model.ReviewRequest{
+		ProjectID:    projectID,
+		MergeRequest: mergeRequest,
+		Changes:      mrContext.FileDiffs,
+	}, mrContext.FileDiffs)
+	if err != nil {
+		return errm.Wrap(err, "failed to build context bundle")
+	}
+
+	res, err := json.MarshalIndent(rew, "", "  ")
+	if err != nil {
+		return errm.Wrap(err, "failed to marshal context bundle")
+	}
+
+	if err := os.WriteFile("context_bundle.json", res, 0644); err != nil {
+		return errm.Wrap(err, "failed to write context bundle to file")
+	}
 	os.Exit(0)
 
 	// Step 2: Process the review with rich context
