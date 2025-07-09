@@ -253,7 +253,7 @@ func (cbb *ContextBundleBuilder) mergeSymbols(symbol1, symbol2 astparser.Affecte
 	}
 
 	// Merge dependencies
-	depMap := make(map[string]astparser.FunctionCall)
+	depMap := make(map[string]astparser.Dependency)
 	for _, dep := range symbol1.Dependencies {
 		depMap[dep.Name] = dep
 	}
@@ -261,14 +261,9 @@ func (cbb *ContextBundleBuilder) mergeSymbols(symbol1, symbol2 astparser.Affecte
 		depMap[dep.Name] = dep
 	}
 
-	merged.Dependencies = make([]astparser.FunctionCall, 0, len(depMap))
+	merged.Dependencies = make([]astparser.Dependency, 0, len(depMap))
 	for _, dep := range depMap {
 		merged.Dependencies = append(merged.Dependencies, dep)
-	}
-
-	// Merge parameters
-	if len(symbol2.Parameters) > len(symbol1.Parameters) {
-		merged.Parameters = symbol2.Parameters
 	}
 
 	return merged

@@ -338,23 +338,16 @@ var symbolNodes = map[string]bool{
 	// Python
 	"function_def":     true, // function_definition
 	"class_definition": true,
-	"assignment":       true,
 
 	// Java
 	"constructor_declaration":    true,
-	"field_declaration":          true,
 	"local_variable_declaration": true,
 
 	// C/C++
-	"function_definition": true,
-	"struct_specifier":    true,
-	"union_specifier":     true,
-	"enum_specifier":      true,
-	"class_specifier":     true,
-	"declaration":         true,
-
-	// Additional common patterns
-	"declaration_list":      true,
-	"declarator":            true,
-	"parameter_declaration": true,
+	"function_definition":                   true,
+	"constructor_or_destructor_declaration": true,
+	"struct_specifier":                      true,
+	"union_specifier":                       true,
+	"enum_specifier":                        true,
+	"class_specifier":                       true,
 }

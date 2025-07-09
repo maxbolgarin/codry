@@ -263,8 +263,8 @@ func (sa *SymbolAnalyzer) walkASTForCallers(node *sitter.Node, content, filePath
 	nodeType := node.Type()
 
 	// Check if this node is a function call that matches our symbol
-	if sa.astParser.isFunctionCallNode(nodeType) {
-		call := sa.astParser.extractFunctionCall(node, content)
+	if strings.Contains(nodeType, "call") {
+		call := sa.astParser.extractDependency(node, content)
 		if sa.isCallToSymbol(call, symbol) {
 			caller := CallerInfo{
 				FilePath:    filePath,
@@ -295,7 +295,7 @@ func (sa *SymbolAnalyzer) walkASTForCallers(node *sitter.Node, content, filePath
 }
 
 // isCallToSymbol checks if a function call is calling our target symbol
-func (sa *SymbolAnalyzer) isCallToSymbol(call FunctionCall, symbol AffectedSymbol) bool {
+func (sa *SymbolAnalyzer) isCallToSymbol(call Dependency, symbol AffectedSymbol) bool {
 	// Simple name matching - could be enhanced with more sophisticated logic
 	return call.Name == symbol.Name || strings.HasSuffix(call.Name, "."+symbol.Name)
 }
@@ -315,7 +315,7 @@ func (sa *SymbolAnalyzer) findContainingFunctionNode(node *sitter.Node, content 
 
 	for current != nil {
 		if sa.astParser.IsSymbolNode(current.Type()) {
-			return sa.astParser.extractFunctionName(current, content)
+			return sa.astParser.extractSymbolName(current, content)
 		}
 		current = current.Parent()
 	}

@@ -107,7 +107,7 @@ func (sch *SpecialCasesHandler) isSymbolExported(symbol AffectedSymbol) bool {
 
 	// JavaScript/TypeScript: look for export keyword in signature
 	if strings.HasSuffix(symbol.FilePath, ".js") || strings.HasSuffix(symbol.FilePath, ".ts") {
-		return strings.Contains(symbol.Signature, "export")
+		return strings.Contains(strings.Split(symbol.FullCode, "\n")[0], "export")
 	}
 
 	// Python: symbols not starting with underscore are generally public
