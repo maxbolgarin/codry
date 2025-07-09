@@ -23,7 +23,7 @@ func (s *Reviewer) generateArchitectureReview(ctx context.Context, bundle *revie
 		return
 	}
 
-	s.logFlow("generated and updated architecture review comment")
+	s.logFlow("generated and updated architecture review")
 
 	bundle.result.IsArchitectureReviewCreated = true
 }

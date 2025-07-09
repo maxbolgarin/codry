@@ -30,6 +30,11 @@ type CodeProvider interface {
 
 	// GetFileContent retrieves the content of a file at a specific commit/SHA
 	GetFileContent(ctx context.Context, projectID, filePath, commitSHA string) (string, error)
+
+	// Commit operations
+	GetMergeRequestCommits(ctx context.Context, projectID string, mrIID int) ([]*model.Commit, error)
+	GetCommitDetails(ctx context.Context, projectID, commitSHA string) (*model.Commit, error)
+	GetCommitDiffs(ctx context.Context, projectID, commitSHA string) ([]*model.FileDiff, error)
 }
 
 // AgentAPI defines the interface for calling LLM AI models

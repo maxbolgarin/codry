@@ -26,6 +26,9 @@ const (
 
 	startMarkerArchitecture = "<!-- Codry: ai-architecture-start -->"
 	endMarkerArchitecture   = "<!-- Codry: ai-architecture-end -->"
+
+	startMarkerCodeReview = "<!-- Codry: ai-code-review-start -->"
+	endMarkerCodeReview   = "<!-- Codry: ai-code-review-end -->"
 )
 
 type Config struct {

@@ -3,6 +3,7 @@ package reviewer
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -37,16 +38,33 @@ func (s *Reviewer) ReviewMergeRequest(ctx context.Context, projectID string, mer
 		return nil
 	}
 
-	diffs, err := s.provider.GetMergeRequestDiffs(ctx, projectID, mergeRequest.IID)
+	// Step 1: Gather comprehensive MR context before any generation
+	s.logFlow("gathering comprehensive MR context", "mr_iid", mergeRequest.IID)
+	mrContext, err := s.contextManager.GatherMRContext(ctx, projectID, mergeRequest)
 	if err != nil {
-		return errm.Wrap(err, "failed to get merge request diffs")
+		return errm.Wrap(err, "failed to gather MR context")
 	}
 
+	s.logFlow("MR context gathered successfully",
+		"mr_iid", mergeRequest.IID,
+		"total_files", mrContext.TotalFiles,
+		"total_commits", mrContext.TotalCommits,
+		"linked_issues", len(mrContext.LinkedIssues),
+		"linked_tickets", len(mrContext.LinkedTickets),
+		"author_comments", len(mrContext.AuthorComments),
+		"total_additions", mrContext.TotalAdditions,
+		"total_deletions", mrContext.TotalDeletions,
+	)
+
+	fmt.Println(mrContext.BuildContextSummary())
+	os.Exit(0)
+
+	// Step 2: Process the review with rich context
 	s.processMergeRequestReview(ctx, model.ReviewRequest{
 		ProjectID:    projectID,
 		MergeRequest: mergeRequest,
-		Changes:      diffs,
-	})
+		Changes:      mrContext.FileDiffs,
+	}, mrContext)
 
 	// Mark MR as reviewed in single review mode
 	if s.cfg.SingleReviewMode {
@@ -120,7 +138,7 @@ func (s *Reviewer) markMRAsReviewed(projectID string, mr *model.MergeRequest) {
 }
 
 // ProcessMergeRequest processes a merge request for the first time
-func (s *Reviewer) processMergeRequestReview(ctx context.Context, request model.ReviewRequest) {
+func (s *Reviewer) processMergeRequestReview(ctx context.Context, request model.ReviewRequest, mrContext *MRContext) {
 	log := s.log.WithFields(
 		"project_id", request.ProjectID,
 		"mr_iid", request.MergeRequest.IID,
@@ -131,9 +149,10 @@ func (s *Reviewer) processMergeRequestReview(ctx context.Context, request model.
 	log.Infof("starting merge request review: '%s'", request.MergeRequest.Title)
 
 	reviewBundle := &reviewBundle{
-		result:  &model.ReviewResult{},
-		request: request,
-		timer:   abstract.StartTimer(),
+		result:    &model.ReviewResult{},
+		request:   request,
+		mrContext: mrContext,
+		timer:     abstract.StartTimer(),
 	}
 
 	defer func() {
@@ -162,6 +181,7 @@ func (s *Reviewer) processMergeRequestReview(ctx context.Context, request model.
 type reviewBundle struct {
 	result         *model.ReviewResult
 	request        model.ReviewRequest
+	mrContext      *MRContext
 	filesToReview  []*model.FileDiff
 	fullDiffString string
 	log            logze.Logger

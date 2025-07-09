@@ -555,6 +555,137 @@ func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int)
 	return allComments, nil
 }
 
+// GetMergeRequestCommits retrieves all commits for a merge request
+func (p *Provider) GetMergeRequestCommits(ctx context.Context, projectID string, mrIID int) ([]*model.Commit, error) {
+	projectIDInt, err := strconv.Atoi(projectID)
+	if err != nil {
+		return nil, errm.Wrap(err, "invalid project ID")
+	}
+
+	// Get all commits for the merge request
+	commits, _, err := p.client.MergeRequests.GetMergeRequestCommits(projectIDInt, mrIID, nil)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get merge request commits from GitLab")
+	}
+
+	// Convert to our model
+	var modelCommits []*model.Commit
+	for _, commit := range commits {
+		modelCommit := p.convertGitLabCommit(commit)
+		modelCommits = append(modelCommits, modelCommit)
+	}
+
+	return modelCommits, nil
+}
+
+// GetCommitDetails retrieves detailed information about a specific commit
+func (p *Provider) GetCommitDetails(ctx context.Context, projectID, commitSHA string) (*model.Commit, error) {
+	projectIDInt, err := strconv.Atoi(projectID)
+	if err != nil {
+		return nil, errm.Wrap(err, "invalid project ID")
+	}
+
+	// Get commit details
+	commit, _, err := p.client.Commits.GetCommit(projectIDInt, commitSHA, nil)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get commit details from GitLab")
+	}
+
+	return p.convertGitLabCommit(commit), nil
+}
+
+// GetCommitDiffs retrieves file diffs for a specific commit
+func (p *Provider) GetCommitDiffs(ctx context.Context, projectID, commitSHA string) ([]*model.FileDiff, error) {
+	projectIDInt, err := strconv.Atoi(projectID)
+	if err != nil {
+		return nil, errm.Wrap(err, "invalid project ID")
+	}
+
+	// Get commit diff
+	diffs, _, err := p.client.Commits.GetCommitDiff(projectIDInt, commitSHA, nil)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get commit diff from GitLab")
+	}
+
+	// Convert to our model
+	var fileDiffs []*model.FileDiff
+	for _, diff := range diffs {
+		fileDiff := &model.FileDiff{
+			OldPath:   diff.OldPath,
+			NewPath:   diff.NewPath,
+			Diff:      diff.Diff,
+			IsNew:     diff.NewFile,
+			IsDeleted: diff.DeletedFile,
+			IsRenamed: diff.RenamedFile,
+			IsBinary:  diff.Diff == "" && !diff.DeletedFile && !diff.NewFile,
+		}
+		fileDiffs = append(fileDiffs, fileDiff)
+	}
+
+	return fileDiffs, nil
+}
+
+// convertGitLabCommit converts a GitLab commit to our model
+func (p *Provider) convertGitLabCommit(commit *gitlab.Commit) *model.Commit {
+	modelCommit := &model.Commit{
+		SHA:       commit.ID,
+		URL:       commit.WebURL,
+		Timestamp: lang.Deref(commit.CommittedDate),
+	}
+
+	// Parse commit message into subject and body
+	if commit.Message != "" {
+		p.parseCommitMessage(commit.Message, modelCommit)
+	}
+
+	// Set author information
+	modelCommit.Author = model.User{
+		Name:  commit.AuthorName,
+		Email: commit.AuthorEmail,
+	}
+
+	// Set committer information
+	modelCommit.Committer = model.User{
+		Name:  commit.CommitterName,
+		Email: commit.CommitterEmail,
+	}
+
+	// Get commit statistics
+	if commit.Stats != nil {
+		modelCommit.Stats = model.CommitStats{
+			Additions:  commit.Stats.Additions,
+			Deletions:  commit.Stats.Deletions,
+			TotalFiles: 0, // GitLab doesn't provide total files in stats, would need to fetch diffs separately
+		}
+	}
+
+	return modelCommit
+}
+
+// parseCommitMessage parses a commit message into subject and body (shared with GitHub)
+func (p *Provider) parseCommitMessage(message string, commit *model.Commit) {
+	lines := strings.Split(message, "\n")
+	if len(lines) == 0 {
+		return
+	}
+
+	// First line is the subject
+	commit.Subject = strings.TrimSpace(lines[0])
+
+	// Rest is the body (skip empty line after subject if present)
+	if len(lines) > 1 {
+		bodyLines := lines[1:]
+		// Skip the first line if it's empty (common convention)
+		if len(bodyLines) > 0 && strings.TrimSpace(bodyLines[0]) == "" {
+			bodyLines = bodyLines[1:]
+		}
+
+		if len(bodyLines) > 0 {
+			commit.Body = strings.TrimSpace(strings.Join(bodyLines, "\n"))
+		}
+	}
+}
+
 // UpdateComment updates an existing comment
 func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID int, commentID string, newBody string) error {
 	projectIDInt, err := strconv.Atoi(projectID)

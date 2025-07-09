@@ -27,7 +27,7 @@ func (s *Reviewer) generateChangesOverview(ctx context.Context, bundle *reviewBu
 		return
 	}
 
-	s.logFlow("generated and updated changes overview comment")
+	s.logFlow("generated and updated changes overview")
 
 	bundle.result.IsChangesOverviewCreated = true
 }

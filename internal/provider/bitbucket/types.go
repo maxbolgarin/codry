@@ -105,3 +105,23 @@ type bitbucketPayload struct {
 	Approval    json.RawMessage      `json:"approval,omitempty"` // For approval events
 	Comment     json.RawMessage      `json:"comment,omitempty"`  // For comment events
 }
+
+type bitbucketCommit struct {
+	Hash    string `json:"hash"`
+	Date    string `json:"date"`
+	Message string `json:"message"`
+	Author  struct {
+		Raw         string `json:"raw"`
+		UUID        string `json:"uuid"`
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+	} `json:"author"`
+	Links struct {
+		Self struct {
+			Href string `json:"href"`
+		} `json:"self"`
+		HTML struct {
+			Href string `json:"href"`
+		} `json:"html"`
+	} `json:"links"`
+}

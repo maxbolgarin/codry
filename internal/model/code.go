@@ -17,6 +17,7 @@ type User struct {
 	ID       string
 	Username string
 	Name     string
+	Email    string
 }
 
 // MergeRequest represents a merge/pull request across different providers

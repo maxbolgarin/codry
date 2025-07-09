@@ -24,7 +24,7 @@ review:
   scoring:
     mode: "everything"
 
-  file_filter:
+  filter:
     allowed_extensions:
       - ".go"
       - ".js"

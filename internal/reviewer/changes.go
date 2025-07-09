@@ -222,6 +222,7 @@ func buildComment(language model.Language, lrc *model.ReviewAIComment) *model.Co
 	reviewHeaders := prompts.DefaultLanguages[language].CodeReviewHeaders
 
 	comment := strings.Builder{}
+	comment.WriteString(startMarkerCodeReview)
 	comment.WriteString("## ")
 	comment.WriteString(reviewHeaders.GetByType(lrc.IssueType))
 	comment.WriteString("\n\n**")
@@ -267,6 +268,7 @@ func buildComment(language model.Language, lrc *model.ReviewAIComment) *model.Co
 			}
 		}
 	}
+	comment.WriteString(endMarkerCodeReview)
 
 	body := comment.String()
 

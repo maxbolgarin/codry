@@ -252,17 +252,17 @@ func (dh CodeReviewHeaders) GetByType(t model.IssueType) string {
 func (dh CodeReviewHeaders) GetIssueImpact(i model.IssueImpact) string {
 	switch i {
 	case model.IssueImpactCritical:
-		return dh.PriorityCritical
+		return dh.IssueImpactCritical
 	case model.IssueImpactHigh:
-		return dh.PriorityHigh
+		return dh.IssueImpactHigh
 	case model.IssueImpactMedium:
-		return dh.PriorityMedium
+		return dh.IssueImpactMedium
 	case model.IssueImpactLow:
-		return dh.PriorityLow
+		return dh.IssueImpactLow
 	}
 
 	logze.Warn("unknown issue impact", "issue_impact", i)
-	return dh.PriorityMedium
+	return dh.IssueImpactMedium
 }
 
 func (dh CodeReviewHeaders) GetConfidence(c model.ModelConfidence) string {

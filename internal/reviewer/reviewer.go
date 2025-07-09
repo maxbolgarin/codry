@@ -28,6 +28,9 @@ type Reviewer struct {
 
 	// Track reviewed MRs to implement single review mode
 	reviewedMRs *abstract.SafeMap[string, reviewTrackingInfo]
+
+	// Context manager for gathering comprehensive MR metadata
+	contextManager *ContextManager
 }
 
 // reviewTrackingInfo stores information about when an MR was reviewed
@@ -49,14 +52,15 @@ func New(cfg Config, provider interfaces.CodeProvider, agent *agent.Agent) (*Rev
 	}
 
 	s := &Reviewer{
-		provider:     provider,
-		agent:        agent,
-		cfg:          cfg,
-		log:          logze.With("component", "reviewer"),
-		pool:         pool,
-		parser:       newDiffParser(),
-		processedMRs: abstract.NewSafeMapOfMaps[string, string, string](),
-		reviewedMRs:  abstract.NewSafeMap[string, reviewTrackingInfo](),
+		provider:       provider,
+		agent:          agent,
+		cfg:            cfg,
+		log:            logze.With("component", "reviewer"),
+		pool:           pool,
+		parser:         newDiffParser(),
+		processedMRs:   abstract.NewSafeMapOfMaps[string, string, string](),
+		reviewedMRs:    abstract.NewSafeMap[string, reviewTrackingInfo](),
+		contextManager: NewContextManager(provider),
 	}
 
 	return s, nil

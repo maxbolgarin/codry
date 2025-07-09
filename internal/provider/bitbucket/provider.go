@@ -638,6 +638,143 @@ func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int)
 	return allComments, nil
 }
 
+// GetMergeRequestCommits retrieves all commits for a pull request
+func (p *Provider) GetMergeRequestCommits(ctx context.Context, projectID string, mrIID int) ([]*model.Commit, error) {
+	// Parse workspace/repo_slug from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+	}
+	workspace, repoSlug := parts[0], parts[1]
+
+	// Build API URL for pull request commits
+	apiURL := fmt.Sprintf("repositories/%s/%s/pullrequests/%d/commits", workspace, repoSlug, mrIID)
+
+	var response struct {
+		Values []bitbucketCommit `json:"values"`
+	}
+
+	_, err := p.client.Get(ctx, apiURL, &response)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get pull request commits from Bitbucket")
+	}
+
+	// Convert to our model
+	var modelCommits []*model.Commit
+	for _, commit := range response.Values {
+		modelCommit := p.convertBitbucketCommit(commit)
+		modelCommits = append(modelCommits, modelCommit)
+	}
+
+	return modelCommits, nil
+}
+
+// GetCommitDetails retrieves detailed information about a specific commit
+func (p *Provider) GetCommitDetails(ctx context.Context, projectID, commitSHA string) (*model.Commit, error) {
+	// Parse workspace/repo_slug from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+	}
+	workspace, repoSlug := parts[0], parts[1]
+
+	// Build API URL for commit details
+	apiURL := fmt.Sprintf("repositories/%s/%s/commit/%s", workspace, repoSlug, commitSHA)
+
+	var commit bitbucketCommit
+	_, err := p.client.Get(ctx, apiURL, &commit)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get commit details from Bitbucket")
+	}
+
+	return p.convertBitbucketCommit(commit), nil
+}
+
+// GetCommitDiffs retrieves file diffs for a specific commit
+func (p *Provider) GetCommitDiffs(ctx context.Context, projectID, commitSHA string) ([]*model.FileDiff, error) {
+	// Parse workspace/repo_slug from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+	}
+	workspace, repoSlug := parts[0], parts[1]
+
+	// Build API URL for commit diff
+	apiURL := fmt.Sprintf("repositories/%s/%s/diff/%s", workspace, repoSlug, commitSHA)
+
+	resp, err := p.client.Get(ctx, apiURL)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get commit diff from Bitbucket")
+	}
+
+	// Parse diff into FileDiff objects
+	diffs := p.parseDiffContent(string(resp.Body()))
+
+	return diffs, nil
+}
+
+// convertBitbucketCommit converts a Bitbucket commit to our model
+func (p *Provider) convertBitbucketCommit(commit bitbucketCommit) *model.Commit {
+	modelCommit := &model.Commit{
+		SHA: commit.Hash,
+		URL: commit.Links.HTML.Href,
+	}
+
+	// Parse commit message into subject and body
+	if commit.Message != "" {
+		p.parseCommitMessage(commit.Message, modelCommit)
+	}
+
+	// Set author information
+	modelCommit.Author = model.User{
+		ID:       commit.Author.UUID,
+		Username: commit.Author.Username,
+		Name:     commit.Author.DisplayName,
+	}
+
+	// Bitbucket doesn't distinguish between author and committer in their API
+	modelCommit.Committer = modelCommit.Author
+
+	// Parse timestamp
+	if timestamp, err := time.Parse(time.RFC3339, commit.Date); err == nil {
+		modelCommit.Timestamp = timestamp
+	}
+
+	// Bitbucket doesn't provide commit stats directly in the commit object
+	// Would need to fetch diff or use a separate API call
+	modelCommit.Stats = model.CommitStats{
+		TotalFiles: 0,
+		Additions:  0,
+		Deletions:  0,
+	}
+
+	return modelCommit
+}
+
+// parseCommitMessage parses a commit message into subject and body (shared method)
+func (p *Provider) parseCommitMessage(message string, commit *model.Commit) {
+	lines := strings.Split(message, "\n")
+	if len(lines) == 0 {
+		return
+	}
+
+	// First line is the subject
+	commit.Subject = strings.TrimSpace(lines[0])
+
+	// Rest is the body (skip empty line after subject if present)
+	if len(lines) > 1 {
+		bodyLines := lines[1:]
+		// Skip the first line if it's empty (common convention)
+		if len(bodyLines) > 0 && strings.TrimSpace(bodyLines[0]) == "" {
+			bodyLines = bodyLines[1:]
+		}
+
+		if len(bodyLines) > 0 {
+			commit.Body = strings.TrimSpace(strings.Join(bodyLines, "\n"))
+		}
+	}
+}
+
 // UpdateComment updates an existing comment
 func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID int, commentID string, newBody string) error {
 	// Parse workspace/repo_slug from projectID

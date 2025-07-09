@@ -635,6 +635,185 @@ func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int)
 	return allComments, nil
 }
 
+// GetMergeRequestCommits retrieves all commits for a pull request
+func (p *Provider) GetMergeRequestCommits(ctx context.Context, projectID string, mrIID int) ([]*model.Commit, error) {
+	// Parse owner/repo from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+	}
+	owner, repo := parts[0], parts[1]
+
+	// Get all commits for the pull request
+	opts := &github.ListOptions{PerPage: 100}
+	var allCommits []*github.RepositoryCommit
+
+	for {
+		commits, resp, err := p.client.PullRequests.ListCommits(ctx, owner, repo, mrIID, opts)
+		if err != nil {
+			return nil, errm.Wrap(err, "failed to list pull request commits")
+		}
+
+		allCommits = append(allCommits, commits...)
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	// Convert to our model
+	var modelCommits []*model.Commit
+	for _, commit := range allCommits {
+		modelCommit := p.convertGitHubCommit(commit)
+		modelCommits = append(modelCommits, modelCommit)
+	}
+
+	return modelCommits, nil
+}
+
+// GetCommitDetails retrieves detailed information about a specific commit
+func (p *Provider) GetCommitDetails(ctx context.Context, projectID, commitSHA string) (*model.Commit, error) {
+	// Parse owner/repo from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+	}
+	owner, repo := parts[0], parts[1]
+
+	// Get commit details
+	commit, _, err := p.client.Repositories.GetCommit(ctx, owner, repo, commitSHA, nil)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get commit details from GitHub")
+	}
+
+	return p.convertGitHubCommit(commit), nil
+}
+
+// GetCommitDiffs retrieves file diffs for a specific commit
+func (p *Provider) GetCommitDiffs(ctx context.Context, projectID, commitSHA string) ([]*model.FileDiff, error) {
+	// Parse owner/repo from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+	}
+	owner, repo := parts[0], parts[1]
+
+	// Get commit with files
+	commit, _, err := p.client.Repositories.GetCommit(ctx, owner, repo, commitSHA, nil)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get commit from GitHub")
+	}
+
+	// Convert files to our model
+	var fileDiffs []*model.FileDiff
+	for _, file := range commit.Files {
+		fileDiff := &model.FileDiff{
+			OldPath:   file.GetPreviousFilename(),
+			NewPath:   file.GetFilename(),
+			Diff:      file.GetPatch(),
+			IsNew:     file.GetStatus() == "added",
+			IsDeleted: file.GetStatus() == "removed",
+			IsRenamed: file.GetStatus() == "renamed",
+			IsBinary:  file.GetPatch() == "" && file.GetStatus() != "removed" && file.GetStatus() != "added",
+		}
+
+		// Handle renamed files
+		if fileDiff.IsRenamed && fileDiff.OldPath == "" {
+			fileDiff.OldPath = fileDiff.NewPath
+		}
+
+		fileDiffs = append(fileDiffs, fileDiff)
+	}
+
+	return fileDiffs, nil
+}
+
+// convertGitHubCommit converts a GitHub commit to our model
+func (p *Provider) convertGitHubCommit(commit *github.RepositoryCommit) *model.Commit {
+	modelCommit := &model.Commit{
+		SHA:       commit.GetSHA(),
+		Subject:   "",
+		Body:      "",
+		URL:       commit.GetHTMLURL(),
+		Timestamp: commit.GetCommit().GetCommitter().GetDate().Time,
+	}
+
+	// Parse commit message into subject and body
+	if commit.GetCommit().GetMessage() != "" {
+		p.parseCommitMessage(commit.GetCommit().GetMessage(), modelCommit)
+	}
+
+	// Set author information
+	if commit.GetCommit().GetAuthor() != nil {
+		modelCommit.Author = model.User{
+			Name:  commit.GetCommit().GetAuthor().GetName(),
+			Email: commit.GetCommit().GetAuthor().GetEmail(),
+		}
+
+		// Try to get GitHub username if available
+		if commit.GetAuthor() != nil {
+			modelCommit.Author.ID = strconv.FormatInt(commit.GetAuthor().GetID(), 10)
+			modelCommit.Author.Username = commit.GetAuthor().GetLogin()
+			if commit.GetAuthor().GetName() != "" {
+				modelCommit.Author.Name = commit.GetAuthor().GetName()
+			}
+		}
+	}
+
+	// Set committer information
+	if commit.GetCommit().GetCommitter() != nil {
+		modelCommit.Committer = model.User{
+			Name:  commit.GetCommit().GetCommitter().GetName(),
+			Email: commit.GetCommit().GetCommitter().GetEmail(),
+		}
+
+		// Try to get GitHub username if available
+		if commit.GetCommitter() != nil {
+			modelCommit.Committer.ID = strconv.FormatInt(commit.GetCommitter().GetID(), 10)
+			modelCommit.Committer.Username = commit.GetCommitter().GetLogin()
+			if commit.GetCommitter().GetName() != "" {
+				modelCommit.Committer.Name = commit.GetCommitter().GetName()
+			}
+		}
+	}
+
+	// Set statistics
+	if commit.GetStats() != nil {
+		modelCommit.Stats = model.CommitStats{
+			Additions:  commit.GetStats().GetAdditions(),
+			Deletions:  commit.GetStats().GetDeletions(),
+			TotalFiles: commit.GetStats().GetTotal(),
+		}
+	}
+
+	return modelCommit
+}
+
+// parseCommitMessage parses a commit message into subject and body
+func (p *Provider) parseCommitMessage(message string, commit *model.Commit) {
+	lines := strings.Split(message, "\n")
+	if len(lines) == 0 {
+		return
+	}
+
+	// First line is the subject
+	commit.Subject = strings.TrimSpace(lines[0])
+
+	// Rest is the body (skip empty line after subject if present)
+	if len(lines) > 1 {
+		bodyLines := lines[1:]
+		// Skip the first line if it's empty (common convention)
+		if len(bodyLines) > 0 && strings.TrimSpace(bodyLines[0]) == "" {
+			bodyLines = bodyLines[1:]
+		}
+
+		if len(bodyLines) > 0 {
+			commit.Body = strings.TrimSpace(strings.Join(bodyLines, "\n"))
+		}
+	}
+}
+
 // UpdateComment updates an existing comment
 func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID int, commentID string, newBody string) error {
 	// Parse owner/repo from projectID
