@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Management System</title>
+    <link rel="stylesheet" href="example.css">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+</head>
+<body>
+    <!-- Header Section -->
+    <header class="main-header">
+        <nav class="navbar">
+            <div class="nav-container">
+                <a href="#" class="nav-logo">UserMS</a>
+                <ul class="nav-menu">
+                    <li class="nav-item">
+                        <a href="#dashboard" class="nav-link">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="#users" class="nav-link">Users</a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="#settings" class="nav-link">Settings</a>
+                    </li>
+                    <li class="nav-item">
+                        <a href="#logout" class="nav-link logout-btn">Logout</a>
+                    </li>
+                </ul>
+                <div class="hamburger">
+                    <span class="bar"></span>
+                    <span class="bar"></span>
+                    <span class="bar"></span>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Dashboard Section -->
+        <section id="dashboard" class="dashboard-section">
+            <div class="container">
+                <h1 class="page-title">Dashboard</h1>
+                
+                <!-- Stats Cards -->
+                <div class="stats-grid">
+                    <div class="stat-card active-users">
+                        <h3 class="stat-title">Active Users</h3>
+                        <div class="stat-number" data-count="1,234">1,234</div>
+                        <p class="stat-change positive">+12% from last month</p>
+                    </div>
+                    
+                    <div class="stat-card total-users">
+                        <h3 class="stat-title">Total Users</h3>
+                        <div class="stat-number" data-count="5,678">5,678</div>
+                        <p class="stat-change neutral">No change</p>
+                    </div>
+                    
+                    <div class="stat-card suspended-users">
+                        <h3 class="stat-title">Suspended</h3>
+                        <div class="stat-number" data-count="23">23</div>
+                        <p class="stat-change negative">+3 this week</p>
+                    </div>
+                </div>
+
+                <!-- Chart Container -->
+                <div class="chart-container">
+                    <h2 class="chart-title">User Activity</h2>
+                    <canvas id="userChart" width="800" height="400"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Users Section -->
+        <section id="users" class="users-section">
+            <div class="container">
+                <div class="section-header">
+                    <h1 class="page-title">User Management</h1>
+                    <button class="btn btn-primary" id="addUserBtn">
+                        <i class="icon-plus"></i>
+                        Add User
+                    </button>
+                </div>
+
+                <!-- Search and Filters -->
+                <div class="filters-container">
+                    <div class="search-box">
+                        <input type="text" id="searchInput" placeholder="Search users..." class="search-input">
+                        <button class="search-btn" type="button">
+                            <i class="icon-search"></i>
+                        </button>
+                    </div>
+                    
+                    <div class="filter-controls">
+                        <select id="statusFilter" class="filter-select">
+                            <option value="">All Statuses</option>
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                            <option value="suspended">Suspended</option>
+                        </select>
+                        
+                        <select id="roleFilter" class="filter-select">
+                            <option value="">All Roles</option>
+                            <option value="admin">Admin</option>
+                            <option value="user">User</option>
+                            <option value="moderator">Moderator</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Users Table -->
+                <div class="table-container">
+                    <table class="users-table" id="usersTable">
+                        <thead>
+                            <tr>
+                                <th class="sortable" data-sort="id">
+                                    ID <i class="sort-icon"></i>
+                                </th>
+                                <th class="sortable" data-sort="name">
+                                    Name <i class="sort-icon"></i>
+                                </th>
+                                <th class="sortable" data-sort="email">
+                                    Email <i class="sort-icon"></i>
+                                </th>
+                                <th class="sortable" data-sort="status">
+                                    Status <i class="sort-icon"></i>
+                                </th>
+                                <th class="sortable" data-sort="created">
+                                    Created <i class="sort-icon"></i>
+                                </th>
+                                <th class="actions-col">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="user-row" data-user-id="1">
+                                <td class="user-id">1</td>
+                                <td class="user-name">
+                                    <div class="user-info">
+                                        <img src="/avatars/alice.jpg" alt="Alice Johnson" class="user-avatar">
+                                        <span>Alice Johnson</span>
+                                    </div>
+                                </td>
+                                <td class="user-email">alice@example.com</td>
+                                <td class="user-status">
+                                    <span class="status-badge active">Active</span>
+                                </td>
+                                <td class="user-created">2024-01-15</td>
+                                <td class="user-actions">
+                                    <button class="btn-icon edit-btn" title="Edit user">
+                                        <i class="icon-edit"></i>
+                                    </button>
+                                    <button class="btn-icon delete-btn" title="Delete user">
+                                        <i class="icon-delete"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                            
+                            <tr class="user-row" data-user-id="2">
+                                <td class="user-id">2</td>
+                                <td class="user-name">
+                                    <div class="user-info">
+                                        <img src="/avatars/bob.jpg" alt="Bob Smith" class="user-avatar">
+                                        <span>Bob Smith</span>
+                                    </div>
+                                </td>
+                                <td class="user-email">bob@example.com</td>
+                                <td class="user-status">
+                                    <span class="status-badge inactive">Inactive</span>
+                                </td>
+                                <td class="user-created">2024-01-10</td>
+                                <td class="user-actions">
+                                    <button class="btn-icon edit-btn" title="Edit user">
+                                        <i class="icon-edit"></i>
+                                    </button>
+                                    <button class="btn-icon delete-btn" title="Delete user">
+                                        <i class="icon-delete"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="pagination-container">
+                    <div class="pagination-info">
+                        Showing 1-10 of 234 users
+                    </div>
+                    <nav class="pagination">
+                        <button class="pagination-btn prev" disabled>
+                            <i class="icon-prev"></i>
+                            Previous
+                        </button>
+                        <button class="pagination-btn page-num active">1</button>
+                        <button class="pagination-btn page-num">2</button>
+                        <button class="pagination-btn page-num">3</button>
+                        <span class="pagination-dots">...</span>
+                        <button class="pagination-btn page-num">24</button>
+                        <button class="pagination-btn next">
+                            Next
+                            <i class="icon-next"></i>
+                        </button>
+                    </nav>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Modal for Add/Edit User -->
+    <div id="userModal" class="modal" role="dialog" aria-labelledby="modalTitle" aria-hidden="true">
+        <div class="modal-overlay" aria-hidden="true"></div>
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2 id="modalTitle" class="modal-title">Add New User</h2>
+                <button class="modal-close" aria-label="Close modal">
+                    <i class="icon-close"></i>
+                </button>
+            </div>
+            
+            <div class="modal-body">
+                <form id="userForm" class="user-form" novalidate>
+                    <div class="form-group">
+                        <label for="userName" class="form-label required">Name</label>
+                        <input type="text" id="userName" name="name" class="form-input" required 
+                               placeholder="Enter user's full name">
+                        <div class="form-error" id="nameError"></div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="userEmail" class="form-label required">Email</label>
+                        <input type="email" id="userEmail" name="email" class="form-input" required 
+                               placeholder="user@example.com">
+                        <div class="form-error" id="emailError"></div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="userRole" class="form-label">Role</label>
+                        <select id="userRole" name="role" class="form-select">
+                            <option value="user">User</option>
+                            <option value="moderator">Moderator</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="userStatus" class="form-label">Status</label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="status" value="active" checked>
+                                <span class="radio-custom"></span>
+                                Active
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="status" value="inactive">
+                                <span class="radio-custom"></span>
+                                Inactive
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Permissions</label>
+                        <div class="checkbox-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="permissions" value="read" checked>
+                                <span class="checkbox-custom"></span>
+                                Read
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="permissions" value="write">
+                                <span class="checkbox-custom"></span>
+                                Write
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="permissions" value="delete">
+                                <span class="checkbox-custom"></span>
+                                Delete
+                            </label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
+                <button type="submit" form="userForm" class="btn btn-primary" id="saveBtn">
+                    <i class="icon-save"></i>
+                    Save User
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="main-footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h3 class="footer-title">User Management System</h3>
+                    <p class="footer-text">Efficient user management for modern applications.</p>
+                </div>
+                
+                <div class="footer-section">
+                    <h4 class="footer-subtitle">Quick Links</h4>
+                    <ul class="footer-links">
+                        <li><a href="#documentation">Documentation</a></li>
+                        <li><a href="#api">API Reference</a></li>
+                        <li><a href="#support">Support</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-section">
+                    <h4 class="footer-subtitle">Contact</h4>
+                    <address class="footer-address">
+                        <p>Email: <a href="mailto:support@example.com">support@example.com</a></p>
+                        <p>Phone: <a href="tel:+1234567890">+1 (234) 567-890</a></p>
+                    </address>
+                </div>
+            </div>
+            
+            <div class="footer-bottom">
+                <p class="copyright">
+                    &copy; 2024 User Management System. All rights reserved.
+                </p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" class="loading-overlay" aria-hidden="true">
+        <div class="spinner">
+            <div class="spinner-circle"></div>
+            <p class="spinner-text">Loading...</p>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/utils.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/components.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html> 
