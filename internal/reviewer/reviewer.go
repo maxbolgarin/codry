@@ -2,9 +2,6 @@ package reviewer
 
 import (
 	"context"
-	"path/filepath"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/maxbolgarin/abstract"
@@ -42,18 +39,13 @@ type reviewTrackingInfo struct {
 
 // New creates a new reviewer
 func New(cfg Config, provider interfaces.CodeProvider, agent *agent.Agent) (*Reviewer, error) {
-	pool, err := ants.NewPool(100)
+	if err := cfg.PrepareAndValidate(); err != nil {
+		return nil, errm.Wrap(err, "failed to prepare and validate config")
+	}
+
+	pool, err := ants.NewPool(defaultPoolSize)
 	if err != nil {
 		return nil, errm.Wrap(err, "failed to create ants pool")
-	}
-
-	if cfg.Language == "" {
-		cfg.Language = model.LanguageEnglish
-	}
-
-	// Initialize default scoring config if not provided
-	if cfg.Scoring.Mode != ScoringModeDisabled && cfg.Scoring.MinOverallScore == 0 {
-		cfg.Scoring = defaultScoringConfig()
 	}
 
 	s := &Reviewer{
@@ -103,22 +95,10 @@ func (s *Reviewer) HandleEvent(ctx context.Context, event *model.CodeEvent) erro
 	}
 }
 
-func (s *Reviewer) isCodeFile(filePath string) bool {
-	if s.cfg.FileFilter.IncludeOnlyCode {
-		ext := strings.ToLower(filepath.Ext(filePath))
-		return slices.Contains(s.cfg.FileFilter.AllowedExtensions, ext)
+func (s *Reviewer) logFlow(msg string, fields ...any) {
+	if s.cfg.Verbose {
+		s.log.Info(msg, fields...)
+	} else {
+		s.log.Debug(msg, fields...)
 	}
-	return true
-}
-
-func (s *Reviewer) isExcludedPath(filePath string) bool {
-	for _, pattern := range s.cfg.FileFilter.ExcludedPaths {
-		if matched, _ := filepath.Match(pattern, filePath); matched {
-			return true
-		}
-		if strings.Contains(filePath, pattern) {
-			return true
-		}
-	}
-	return false
 }

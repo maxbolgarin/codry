@@ -9,12 +9,11 @@ import (
 )
 
 func (s *Reviewer) generateArchitectureReview(ctx context.Context, bundle *reviewBundle) {
-	if !s.cfg.EnableArchitectureReview {
-		bundle.log.InfoIf(s.cfg.Verbose, "architecture review is disabled, skipping")
+	if !s.cfg.Generate.ArchitectureReview {
+		s.logFlow("architecture review is disabled, skipping")
 		return
 	}
-
-	bundle.log.Debug("generating architecture review")
+	s.logFlow("generating architecture review")
 
 	err := s.createOrUpdateArchitectureReview(ctx, bundle.request, bundle.fullDiffString)
 	if err != nil {
@@ -24,7 +23,7 @@ func (s *Reviewer) generateArchitectureReview(ctx context.Context, bundle *revie
 		return
 	}
 
-	bundle.log.InfoIf(s.cfg.Verbose, "generated and updated architecture review comment")
+	s.logFlow("generated and updated architecture review comment")
 
 	bundle.result.IsArchitectureReviewCreated = true
 }

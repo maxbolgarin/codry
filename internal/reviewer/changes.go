@@ -14,23 +14,30 @@ import (
 )
 
 func (s *Reviewer) generateCodeReview(ctx context.Context, bundle *reviewBundle) {
-	if !s.cfg.EnableCodeReview {
-		bundle.log.InfoIf(s.cfg.Verbose, "code review is disabled, skipping")
+	if !s.cfg.Generate.CodeReview {
+		s.logFlow("code review is disabled, skipping")
 		return
 	}
-	bundle.log.Debug("generating code review")
+	s.logFlow("generating code review")
 
 	for _, change := range bundle.filesToReview {
-		s.reviewCodeChanges(ctx, bundle, change)
+		if err := s.reviewCodeChanges(ctx, bundle, change); err != nil {
+			msg := "failed to perform basic review"
+			bundle.log.Err(err, msg)
+			if strings.Contains(err.Error(), "context canceled") {
+				return
+			}
+			bundle.result.Errors = append(bundle.result.Errors, errm.Wrap(err, msg))
+		}
 	}
 
-	bundle.log.InfoIf(s.cfg.Verbose, "finished code review")
+	s.logFlow("finished code review")
 
 	bundle.result.IsCodeReviewCreated = true
 }
 
 // reviewCodeChanges reviews individual files and creates comments
-func (s *Reviewer) reviewCodeChanges(ctx context.Context, bundle *reviewBundle, change *model.FileDiff) {
+func (s *Reviewer) reviewCodeChanges(ctx context.Context, bundle *reviewBundle, change *model.FileDiff) error {
 	// Guard old path
 	change.OldPath = lang.Check(change.OldPath, change.NewPath)
 
@@ -38,32 +45,31 @@ func (s *Reviewer) reviewCodeChanges(ctx context.Context, bundle *reviewBundle, 
 	if oldHash, ok := s.processedMRs.Lookup(bundle.request.String(), change.NewPath); ok {
 		if oldHash == fileHash {
 			bundle.log.DebugIf(s.cfg.Verbose, "skipping already reviewed", "file", change.NewPath)
-			return
+			return nil
 		}
 	}
 
-	bundle.log.DebugIf(s.cfg.Verbose, "performing review", "file", change.NewPath)
+	s.logFlow("performing review", "file", change.NewPath)
 
 	reviewResult, err := s.performBasicReview(ctx, bundle.request, change, bundle.log)
 	if err != nil {
-		msg := "failed to perform basic review"
-		bundle.log.Err(err, msg)
-		bundle.result.Errors = append(bundle.result.Errors, errm.Wrap(err, msg))
-		return
+		return err
 	}
 
 	// Skip if no issues found
 	if reviewResult == nil || !reviewResult.HasIssues || len(reviewResult.Comments) == 0 {
 		bundle.log.DebugIf(s.cfg.Verbose, "no issues found", "file", change.NewPath)
 		s.processedMRs.Set(bundle.request.String(), change.NewPath, fileHash)
-		return
+		return nil
 	}
 
 	commentsCreated := s.processReviewResults(ctx, bundle.request, change, reviewResult, bundle.log)
 	bundle.result.CommentsCreated += commentsCreated
 	s.processedMRs.Set(bundle.request.String(), change.NewPath, fileHash)
 
-	bundle.log.InfoIf(s.cfg.Verbose, "reviewed successfully", "file", change.NewPath, "comments", len(reviewResult.Comments))
+	s.logFlow("reviewed successfully", "file", change.NewPath, "comments", len(reviewResult.Comments))
+
+	return nil
 }
 
 // performBasicReview performs basic review without enhanced context (fallback)
@@ -91,12 +97,7 @@ func (s *Reviewer) processReviewResults(ctx context.Context, request model.Revie
 	}
 
 	// Score and filter comments based on scoring mode
-	var filteredComments []*model.ReviewAIComment
-	if s.cfg.Scoring.Mode != ScoringModeDisabled {
-		filteredComments = s.scoreAndFilterComments(ctx, reviewResult.Comments, change, log)
-	} else {
-		filteredComments = reviewResult.Comments
-	}
+	filteredComments := s.scoreAndFilterComments(ctx, reviewResult.Comments, change, log)
 
 	// Create line-specific comments
 	for _, reviewComment := range filteredComments {
@@ -120,14 +121,15 @@ func (s *Reviewer) processReviewResults(ctx context.Context, request model.Revie
 			"file", change.NewPath,
 			"line", reviewComment.Line,
 			"type", reviewComment.IssueType,
-			"priority", reviewComment.Priority,
-			"confidence", reviewComment.Confidence)
+			"impact", reviewComment.IssueImpact,
+			"priority", reviewComment.FixPriority,
+			"confidence", reviewComment.ModelConfidence)
 	}
 
 	// Log filtering results if scoring was used
-	if s.cfg.Scoring.Mode != ScoringModeDisabled && len(reviewResult.Comments) > len(filteredComments) {
+	if len(reviewResult.Comments) > len(filteredComments) {
 		filteredCount := len(reviewResult.Comments) - len(filteredComments)
-		log.InfoIf(s.cfg.Verbose, "filtered low-quality comments",
+		s.logFlow("filtered low-quality comments",
 			"total_comments", len(reviewResult.Comments),
 			"filtered_count", filteredCount,
 			"final_count", len(filteredComments),
@@ -218,19 +220,22 @@ func (s *Reviewer) getFileHash(diff string) string {
 // buildComment converts a LineReviewComment to a Comment model
 func buildComment(language model.Language, lrc *model.ReviewAIComment) *model.Comment {
 	reviewHeaders := prompts.DefaultLanguages[language].CodeReviewHeaders
-	header := reviewHeaders.GetByType(lrc.IssueType)
 
 	comment := strings.Builder{}
 	comment.WriteString("## ")
-	comment.WriteString(header)
+	comment.WriteString(reviewHeaders.GetByType(lrc.IssueType))
 	comment.WriteString("\n\n**")
-	comment.WriteString(reviewHeaders.ConfidenceHeader)
+	comment.WriteString(reviewHeaders.IssueImpactHeader)
 	comment.WriteString("**: ")
-	comment.WriteString(reviewHeaders.GetConfidence(lrc.Confidence))
+	comment.WriteString(reviewHeaders.GetIssueImpact(lrc.IssueImpact))
 	comment.WriteString("\n**")
-	comment.WriteString(reviewHeaders.PriorityHeader)
+	comment.WriteString(reviewHeaders.FixPriorityHeader)
 	comment.WriteString("**: ")
-	comment.WriteString(reviewHeaders.GetPriority(lrc.Priority))
+	comment.WriteString(reviewHeaders.GetPriority(lrc.FixPriority))
+	comment.WriteString("\n**")
+	comment.WriteString(reviewHeaders.ModelConfidenceHeader)
+	comment.WriteString("**: ")
+	comment.WriteString(reviewHeaders.GetConfidence(lrc.ModelConfidence))
 	comment.WriteString("\n\n")
 	if lrc.Title != "" {
 		comment.WriteString("### ")

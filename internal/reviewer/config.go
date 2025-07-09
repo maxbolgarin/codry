@@ -1,9 +1,20 @@
 package reviewer
 
 import (
+	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/maxbolgarin/codry/internal/model"
+	"github.com/maxbolgarin/lang"
+)
+
+const (
+	defaultMaxFiles          = 100
+	defaultMaxFileSizeTokens = 1_000_000
+	defaultPoolSize          = 100
+	defaultLanguage          = model.LanguageEnglish
 )
 
 const (
@@ -18,70 +29,144 @@ const (
 )
 
 type Config struct {
-	FileFilter             FileFilter    `yaml:"file_filter"`
-	MaxFilesPerMR          int           `yaml:"max_files_per_mr" env:"REVIEW_MAX_FILES_PER_MR"`
-	MinFilesForDescription int           `yaml:"min_files_for_description" env:"REVIEW_MIN_FILES_FOR_DESCRIPTION"`
-	ProcessingDelay        time.Duration `yaml:"processing_delay" env:"REVIEW_PROCESSING_DELAY"`
+	Generate GenerateConfig `yaml:"generate"`
+	Filter   Filter         `yaml:"filter"`
+	Scoring  ScoringConfig  `yaml:"scoring"`
 
-	UpdateDescriptionOnMR           bool `yaml:"update_description_on_mr" env:"REVIEW_UPDATE_DESCRIPTION_ON_MR"`
-	EnableDescriptionGeneration     bool `yaml:"enable_description_generation" env:"REVIEW_ENABLE_DESCRIPTION_GENERATION"`
-	EnableChangesOverviewGeneration bool `yaml:"enable_changes_overview_generation" env:"REVIEW_ENABLE_CHANGES_OVERVIEW_GENERATION"`
-	EnableArchitectureReview        bool `yaml:"enable_architecture_review" env:"REVIEW_ENABLE_ARCHITECTURE_REVIEW"`
-	EnableCodeReview                bool `yaml:"enable_code_review" env:"REVIEW_ENABLE_CODE_REVIEW"`
+	Verbose          bool          `yaml:"verbose" env:"REVIEW_VERBOSE"`
+	SingleReviewMode bool          `yaml:"single_mode" env:"REVIEW_SINGLE_MODE"`
+	TrackingTTL      time.Duration `yaml:"tracking_ttl"`
 
-	// Scoring configuration for filtering low-quality issues
-	Scoring ScoringConfig `yaml:"scoring"`
-
-	// Single review tracking - only review each MR once unless there are new changes
-	EnableSingleReviewMode bool          `yaml:"enable_single_review_mode" env:"REVIEW_ENABLE_SINGLE_REVIEW_MODE"`
-	ReviewTrackingTTL      time.Duration `yaml:"review_tracking_ttl" env:"REVIEW_TRACKING_TTL"`
-
-	Language model.Language `yaml:"language" env:"REVIEW_LANGUAGE"`
-	Verbose  bool           `yaml:"verbose" env:"REVIEW_VERBOSE"`
+	// Get from code
+	Language model.Language `yaml:"-"`
 }
 
-// FileFilter represents criteria for filtering files to review
-type FileFilter struct {
-	MaxFileSize       int      `yaml:"max_file_size" env:"REVIEW_FILE_FILTER_MAX_FILE_SIZE"`
-	AllowedExtensions []string `yaml:"allowed_extensions" env:"REVIEW_FILE_FILTER_ALLOWED_EXTENSIONS"`
-	ExcludedPaths     []string `yaml:"excluded_paths" env:"REVIEW_FILE_FILTER_EXCLUDED_PATHS"`
-	IncludeOnlyCode   bool     `yaml:"include_only_code" env:"REVIEW_FILE_FILTER_INCLUDE_ONLY_CODE"`
+type GenerateConfig struct {
+	// Generate reviews
+	Description        bool `yaml:"description" env:"REVIEW_DESCRIPTION"`
+	ChangesOverview    bool `yaml:"changes_overview" env:"REVIEW_CHANGES_OVERVIEW"`
+	ArchitectureReview bool `yaml:"architecture" env:"REVIEW_ARCHITECTURE"`
+	CodeReview         bool `yaml:"code" env:"REVIEW_CODE"`
+}
+
+// Filter represents criteria for filtering files to review
+type Filter struct {
+	MaxFiles          int      `yaml:"max_files"`
+	MaxFileSizeTokens int      `yaml:"max_file_size_tokens"`
+	MaxOverallTokens  int      `yaml:"max_overall_tokens"` // TODO: count this
+	AllowedExtensions []string `yaml:"allowed_extensions"`
+	ExcludedPaths     []string `yaml:"excluded_paths"`
 }
 
 // ScoringMode defines the scoring strategy
 type ScoringMode string
 
 const (
-	ScoringModeDisabled ScoringMode = "disabled" // No scoring/filtering
-	ScoringModeCheap    ScoringMode = "cheap"    // Use existing comment fields for scoring
-	ScoringModeAI       ScoringMode = "ai"       // Use additional AI prompt for scoring
+	ScoringModeStrict     ScoringMode = "strict"     // Use strict scoring configuration
+	ScoringModeMedium     ScoringMode = "medium"     // Use medium scoring configuration
+	ScoringModeEverything ScoringMode = "everything" // Use everything scoring configuration
 )
 
 // ScoringConfig represents configuration for the issue scoring model
 type ScoringConfig struct {
-	// Scoring mode: "disabled", "cheap", or "ai"
-	Mode ScoringMode `yaml:"mode" env:"SCORING_MODE"`
+	// Scoring mode: "strict", "medium", "everything"
+	Mode ScoringMode `yaml:"mode" env:"REVIEW_SCORING_MODE"`
 
-	// Minimum scores for issues to not be filtered
-	MinOverallScore       float64 `yaml:"min_overall_score" env:"SCORING_MIN_OVERALL"`
-	MinSeverityScore      float64 `yaml:"min_severity_score" env:"SCORING_MIN_SEVERITY"`
-	MinConfidenceScore    float64 `yaml:"min_confidence_score" env:"SCORING_MIN_CONFIDENCE"`
-	MinRelevanceScore     float64 `yaml:"min_relevance_score" env:"SCORING_MIN_RELEVANCE"`
-	MinActionabilityScore float64 `yaml:"min_actionability_score" env:"SCORING_MIN_ACTIONABILITY"`
-
-	// Verbose scoring for debugging
-	VerboseScoring bool `yaml:"verbose_scoring" env:"SCORING_VERBOSE"`
+	// Allowed issue types, impacts, fix priorities, and model confidences
+	IssueTypes       []model.IssueType       `yaml:"issue_types"` // TODO: remove this
+	IssueImpacts     []model.IssueImpact     `yaml:"issue_impacts"`
+	FixPriorities    []model.FixPriority     `yaml:"fix_priorities"`
+	ModelConfidences []model.ModelConfidence `yaml:"model_confidences"`
 }
 
-// defaultScoringConfig returns default scoring configuration
-func defaultScoringConfig() ScoringConfig {
-	return ScoringConfig{
-		Mode:                  ScoringModeCheap, // Default to cheap scoring
-		MinOverallScore:       0.3,              // Filter out issues with overall score < 0.3
-		MinSeverityScore:      0.2,              // Allow info-level issues if they're otherwise good
-		MinConfidenceScore:    0.4,              // Filter out low-confidence issues
-		MinRelevanceScore:     0.3,              // Filter out issues not relevant to changes
-		MinActionabilityScore: 0.3,              // Filter out vague, non-actionable feedback
-		VerboseScoring:        false,
+func (c *Config) PrepareAndValidate() error {
+	c.Language = lang.Check(c.Language, defaultLanguage)
+	c.TrackingTTL = lang.Check(c.TrackingTTL, 24*time.Hour)
+	c.Scoring.Mode = lang.Check(c.Scoring.Mode, ScoringModeEverything)
+
+	c.Filter.MaxFiles = lang.Check(c.Filter.MaxFiles, defaultMaxFiles)
+	c.Filter.MaxFileSizeTokens = lang.Check(c.Filter.MaxFileSizeTokens, defaultMaxFileSizeTokens)
+
+	switch c.Scoring.Mode {
+	case ScoringModeStrict:
+		c.Scoring = strictScoringConfig()
+	case ScoringModeMedium:
+		c.Scoring = mediumScoringConfig()
+	case ScoringModeEverything:
+		fallthrough
+	default:
+		c.Scoring = everythingScoringConfig()
 	}
+
+	return nil
+}
+
+// strictScoringConfig returns strict scoring configuration
+func strictScoringConfig() ScoringConfig {
+	return ScoringConfig{
+		Mode: ScoringModeStrict,
+		IssueTypes: []model.IssueType{
+			model.IssueTypeFailure,
+			model.IssueTypeBug,
+			model.IssueTypeSecurity,
+		},
+		IssueImpacts: []model.IssueImpact{
+			model.IssueImpactCritical,
+			model.IssueImpactHigh,
+		},
+		FixPriorities: []model.FixPriority{
+			model.FixPriorityHotfix,
+			model.FixPriorityFirst,
+		},
+		ModelConfidences: []model.ModelConfidence{
+			model.ModelConfidenceVeryHigh,
+			model.ModelConfidenceHigh,
+		},
+	}
+}
+
+// mediumScoringConfig returns medium scoring configuration
+func mediumScoringConfig() ScoringConfig {
+	return ScoringConfig{
+		Mode: ScoringModeMedium,
+		IssueImpacts: []model.IssueImpact{
+			model.IssueImpactCritical,
+			model.IssueImpactHigh,
+			model.IssueImpactMedium,
+		},
+		FixPriorities: []model.FixPriority{
+			model.FixPriorityHotfix,
+			model.FixPriorityFirst,
+			model.FixPrioritySecond,
+		},
+		ModelConfidences: []model.ModelConfidence{
+			model.ModelConfidenceVeryHigh,
+			model.ModelConfidenceHigh,
+			model.ModelConfidenceMedium,
+		},
+	}
+}
+
+// everythingScoringConfig returns everything scoring configuration
+func everythingScoringConfig() ScoringConfig {
+	return ScoringConfig{
+		Mode: ScoringModeEverything,
+	}
+}
+
+func (s *Config) isAllowedExtension(filePath string) bool {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	return slices.Contains(s.Filter.AllowedExtensions, ext)
+}
+
+func (s *Config) isExcludedPath(filePath string) bool {
+	for _, pattern := range s.Filter.ExcludedPaths {
+		if matched, _ := filepath.Match(pattern, filePath); matched {
+			return true
+		}
+		if strings.Contains(filePath, pattern) {
+			return true
+		}
+	}
+	return false
 }

@@ -66,43 +66,24 @@ type FileReviewResult struct {
 
 // ReviewAIComment represents a structured review comment for a specific line or range of lines
 type ReviewAIComment struct {
-	FilePath     string           `json:"file_path"`
-	Line         int              `json:"line"`               // Start line (for single line comments)
-	EndLine      int              `json:"end_line,omitempty"` // End line (for range comments, optional)
-	OldLine      int              `json:"old_line,omitempty"`
-	Position     int              `json:"position,omitempty"`
-	IssueType    IssueType        `json:"issue_type"`
-	Confidence   ReviewConfidence `json:"confidence"`
-	Priority     ReviewPriority   `json:"priority"`
-	CodeLanguage string           `json:"code_language"`
-	Title        string           `json:"title"`
-	Description  string           `json:"description"`
-	Suggestion   string           `json:"suggestion,omitempty"`
-	CodeSnippet  string           `json:"code_snippet,omitempty"`
-}
+	Line    int `json:"line"`
+	EndLine int `json:"end_line,omitempty"`
 
-// IssueScore represents a score for a code review issue
-type IssueScore struct {
-	// Overall score from 0.0 to 1.0 (higher = more important/relevant)
-	OverallScore float64 `json:"overall_score"`
+	IssueType       IssueType       `json:"issue_type"`
+	IssueImpact     IssueImpact     `json:"issue_impact"`
+	FixPriority     FixPriority     `json:"fix_priority"`
+	ModelConfidence ModelConfidence `json:"model_confidence"`
 
-	// Severity score (0.0 = info, 1.0 = critical)
-	SeverityScore float64 `json:"severity_score"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Suggestion  string `json:"suggestion,omitempty"`
+	CodeSnippet string `json:"code_snippet,omitempty"`
 
-	// Confidence score (0.0 = low confidence, 1.0 = high confidence)
-	ConfidenceScore float64 `json:"confidence_score"`
-
-	// Relevance score (0.0 = not relevant to current change, 1.0 = highly relevant)
-	RelevanceScore float64 `json:"relevance_score"`
-
-	// Actionability score (0.0 = vague feedback, 1.0 = specific actionable)
-	ActionabilityScore float64 `json:"actionability_score"`
-
-	// Whether this issue should be filtered out
-	ShouldFilter bool `json:"should_filter"`
-
-	// Reason for filtering (if ShouldFilter is true)
-	FilterReason string `json:"filter_reason,omitempty"`
+	// Set in code
+	FilePath     string `json:"-"`
+	OldLine      int    `json:"-"`
+	Position     int    `json:"-"`
+	CodeLanguage string `json:"-"`
 }
 
 // IsRangeComment returns true if this comment spans mul	tiple lines
@@ -114,32 +95,44 @@ func (lrc *ReviewAIComment) IsRangeComment() bool {
 type IssueType string
 
 const (
-	IssueTypeCritical    IssueType = "critical"
+	IssueTypeFailure     IssueType = "failure"
 	IssueTypeBug         IssueType = "bug"
-	IssueTypePerformance IssueType = "performance"
 	IssueTypeSecurity    IssueType = "security"
+	IssueTypePerformance IssueType = "performance"
 	IssueTypeRefactor    IssueType = "refactor"
+	IssueTypeIdea        IssueType = "idea"
+	IssueTypeBadPractice IssueType = "bad_practice"
 	IssueTypeOther       IssueType = "other"
 )
 
-// ReviewConfidence defines the confidence level of review issues by AI
-type ReviewConfidence string
+// IssueImpact defines the impact level of review issues by AI
+type IssueImpact string
 
 const (
-	ConfidenceVeryHigh ReviewConfidence = "very_high"
-	ConfidenceHigh     ReviewConfidence = "high"
-	ConfidenceMedium   ReviewConfidence = "medium"
-	ConfidenceLow      ReviewConfidence = "low"
+	IssueImpactCritical IssueImpact = "critical"
+	IssueImpactHigh     IssueImpact = "high"
+	IssueImpactMedium   IssueImpact = "medium"
+	IssueImpactLow      IssueImpact = "low"
 )
 
-// ReviewPriority defines the priority level of review issues by AI
-type ReviewPriority string
+// ModelConfidence defines the confidence level of review issues by AI
+type ModelConfidence string
 
 const (
-	ReviewPriorityCritical ReviewPriority = "critical"
-	ReviewPriorityHigh     ReviewPriority = "high"
-	ReviewPriorityMedium   ReviewPriority = "medium"
-	ReviewPriorityBacklog  ReviewPriority = "backlog"
+	ModelConfidenceVeryHigh ModelConfidence = "very_high"
+	ModelConfidenceHigh     ModelConfidence = "high"
+	ModelConfidenceMedium   ModelConfidence = "medium"
+	ModelConfidenceLow      ModelConfidence = "low"
+)
+
+// FixPriority defines the priority level of review issues by AI
+type FixPriority string
+
+const (
+	FixPriorityHotfix  FixPriority = "hotfix"
+	FixPriorityFirst   FixPriority = "first"
+	FixPrioritySecond  FixPriority = "second"
+	FixPriorityBacklog FixPriority = "backlog"
 )
 
 // FileChangeType represents the type of change in a file
@@ -150,6 +143,7 @@ const (
 	FileChangeTypeBugFix     FileChangeType = "bug_fix"
 	FileChangeTypeRefactor   FileChangeType = "refactor"
 	FileChangeTypeTest       FileChangeType = "test"
+	FileChangeTypeConfig     FileChangeType = "config"
 	FileChangeTypeDeploy     FileChangeType = "deploy"
 	FileChangeTypeDocs       FileChangeType = "docs"
 	FileChangeTypeCleanup    FileChangeType = "cleanup"
@@ -157,16 +151,17 @@ const (
 	FileChangeTypeOther      FileChangeType = "other"
 )
 
-var fileChangeTypePriority = abstract.NewSafeMap[FileChangeType, int](map[FileChangeType]int{
+var fileChangeTypePriority = abstract.NewSafeMap(map[FileChangeType]int{
 	FileChangeTypeNewFeature: 1,
 	FileChangeTypeBugFix:     2,
 	FileChangeTypeRefactor:   3,
 	FileChangeTypeTest:       4,
-	FileChangeTypeDeploy:     5,
-	FileChangeTypeDocs:       6,
-	FileChangeTypeCleanup:    7,
-	FileChangeTypeStyle:      8,
-	FileChangeTypeOther:      9,
+	FileChangeTypeConfig:     5,
+	FileChangeTypeDeploy:     6,
+	FileChangeTypeDocs:       7,
+	FileChangeTypeCleanup:    8,
+	FileChangeTypeStyle:      9,
+	FileChangeTypeOther:      10,
 })
 
 func (fct FileChangeType) Compare(other FileChangeType) int {

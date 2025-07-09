@@ -9,11 +9,11 @@ import (
 )
 
 func (s *Reviewer) generateDescription(ctx context.Context, bundle *reviewBundle) {
-	if !s.cfg.EnableDescriptionGeneration {
-		bundle.log.InfoIf(s.cfg.Verbose, "description generation is disabled, skipping")
+	if !s.cfg.Generate.Description {
+		s.logFlow("description generation is disabled, skipping")
 		return
 	}
-	bundle.log.DebugIf(s.cfg.Verbose, "generating description")
+	s.logFlow("generating description")
 
 	if err := s.createDescription(ctx, bundle.request, bundle.fullDiffString); err != nil {
 		msg := "failed to generate description"
@@ -22,7 +22,7 @@ func (s *Reviewer) generateDescription(ctx context.Context, bundle *reviewBundle
 		return
 	}
 
-	bundle.log.InfoIf(s.cfg.Verbose, "generated and updated description")
+	s.logFlow("generated and updated description")
 
 	bundle.result.IsDescriptionCreated = true
 }

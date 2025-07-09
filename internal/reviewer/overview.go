@@ -13,11 +13,11 @@ import (
 )
 
 func (s *Reviewer) generateChangesOverview(ctx context.Context, bundle *reviewBundle) {
-	if !s.cfg.EnableChangesOverviewGeneration {
-		bundle.log.InfoIf(s.cfg.Verbose, "changes overview generation is disabled, skipping")
+	if !s.cfg.Generate.ChangesOverview {
+		s.logFlow("changes overview generation is disabled, skipping")
 		return
 	}
-	bundle.log.Debug("generating changes overview")
+	s.logFlow("generating changes overview")
 
 	err := s.createOrUpdateChangesOverview(ctx, bundle.request, bundle.fullDiffString)
 	if err != nil {
@@ -27,7 +27,7 @@ func (s *Reviewer) generateChangesOverview(ctx context.Context, bundle *reviewBu
 		return
 	}
 
-	bundle.log.InfoIf(s.cfg.Verbose, "generated and updated changes overview comment")
+	s.logFlow("generated and updated changes overview comment")
 
 	bundle.result.IsChangesOverviewCreated = true
 }

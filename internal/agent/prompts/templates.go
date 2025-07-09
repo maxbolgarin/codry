@@ -2,8 +2,6 @@ package prompts
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/maxbolgarin/codry/internal/model"
 )
@@ -154,53 +152,6 @@ func (tb *Builder) BuildReviewPrompt(filename, fullFileContent, cleanDiff string
 		fullFileContent,
 		cleanDiff,
 	)
-
-	return model.Prompt{
-		SystemPrompt: systemPrompt,
-		UserPrompt:   userPrompt,
-		Language:     tb.language.Language,
-	}
-}
-
-// BuildScoringPrompt creates a prompt for scoring review comments to enable filtering
-func (tb *Builder) BuildScoringPrompt(comments []*model.ReviewAIComment, filePath, diff string) model.Prompt {
-	systemPrompt := fmt.Sprintf(scoringSystemPromptTemplate, tb.language.Instructions)
-
-	// Estimate and pre-allocate comments builder capacity
-	estimatedSize := len(comments) * 300 // ~300 chars average per comment
-	for _, comment := range comments {
-		estimatedSize += len(comment.Title) + len(comment.Description) +
-			len(comment.Suggestion) + len(comment.CodeSnippet)
-	}
-
-	var commentsBuilder strings.Builder
-	commentsBuilder.Grow(estimatedSize)
-
-	// Build comments with efficient sprintf usage
-	for i, comment := range comments {
-		lineRange := strconv.Itoa(comment.Line)
-		if comment.EndLine > comment.Line {
-			lineRange += "-" + strconv.Itoa(comment.EndLine)
-		}
-
-		// Main comment structure with sprintf for readability
-		commentsBuilder.WriteString(fmt.Sprintf("**Comment %d:**\n- Line: %s\n- Issue Type: %s\n- Priority: %s\n- Confidence: %s\n- Title: %s\n- Description: %s\n",
-			i+1, lineRange, comment.IssueType, comment.Priority, comment.Confidence, comment.Title, comment.Description))
-
-		// Optional fields
-		if comment.Suggestion != "" {
-			commentsBuilder.WriteString(fmt.Sprintf("- Suggestion: %s\n", comment.Suggestion))
-		}
-
-		if comment.CodeSnippet != "" {
-			commentsBuilder.WriteString(fmt.Sprintf("- Code Snippet: ```\n%s\n```\n", comment.CodeSnippet))
-		}
-
-		commentsBuilder.WriteString("\n")
-	}
-
-	// Build user prompt with simple sprintf
-	userPrompt := fmt.Sprintf(scoringUserPromptTemplate, filePath, diff, commentsBuilder.String())
 
 	return model.Prompt{
 		SystemPrompt: systemPrompt,

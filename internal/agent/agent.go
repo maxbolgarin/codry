@@ -157,54 +157,6 @@ func (a *Agent) ReviewCode(ctx context.Context, filename, fullFileContent, clean
 	return &result, nil
 }
 
-// ScoreReviewComments generates scores for review comments to enable filtering of low-quality issues
-func (a *Agent) ScoreReviewComments(ctx context.Context, comments []*model.ReviewAIComment, filePath, diff string) ([]model.IssueScore, error) {
-	if len(comments) == 0 {
-		return []model.IssueScore{}, nil
-	}
-
-	prompt := a.pb.BuildScoringPrompt(comments, filePath, diff)
-	response, err := a.apiCall(ctx, prompt, true)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to call API for comment scoring")
-	}
-
-	a.log.Debug("comment scoring generated",
-		"input_tokens", response.PromptTokens,
-		"output_tokens", response.CompletionTokens,
-		"total_tokens", response.TotalTokens,
-		"filename", filePath,
-		"comments_count", len(comments),
-	)
-
-	var scores []model.IssueScore
-	err = json.Unmarshal([]byte(response.Content), &scores)
-	if err != nil {
-		fmt.Println("cannot unmarshal scoring response:", err.Error())
-		fmt.Println(response.Content)
-		return nil, errm.Wrap(err, "failed to parse comment scoring response as JSON")
-	}
-
-	// Ensure we have the same number of scores as comments
-	if len(scores) != len(comments) {
-		a.log.Warn("score count mismatch", "expected", len(comments), "got", len(scores))
-		// Pad with default scores if necessary
-		for len(scores) < len(comments) {
-			scores = append(scores, model.IssueScore{
-				OverallScore:       0.5,
-				SeverityScore:      0.5,
-				ConfidenceScore:    0.5,
-				RelevanceScore:     0.5,
-				ActionabilityScore: 0.5,
-				ShouldFilter:       false,
-				FilterReason:       "default_score_due_to_mismatch",
-			})
-		}
-	}
-
-	return scores, nil
-}
-
 func (a *Agent) apiCall(ctx context.Context, prompt model.Prompt, isJSON bool) (model.APIResponse, error) {
 	response, err := a.api.CallAPI(ctx, model.APIRequest{
 		Prompt:       prompt.UserPrompt,

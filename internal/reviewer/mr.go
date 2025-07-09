@@ -29,8 +29,8 @@ func (s *Reviewer) ReviewMergeRequest(ctx context.Context, projectID string, mer
 	}
 
 	// Check single review mode - only review once unless there are new changes
-	if s.cfg.EnableSingleReviewMode && s.hasAlreadyBeenReviewed(projectID, mergeRequest) {
-		s.log.Debug("MR already reviewed in single review mode, skipping",
+	if s.cfg.SingleReviewMode && s.hasAlreadyBeenReviewed(projectID, mergeRequest) {
+		s.logFlow("MR already reviewed in single review mode, skipping",
 			"mr_iid", mergeRequest.IID,
 			"project_id", projectID,
 			"current_sha", mergeRequest.SHA)
@@ -49,7 +49,7 @@ func (s *Reviewer) ReviewMergeRequest(ctx context.Context, projectID string, mer
 	})
 
 	// Mark MR as reviewed in single review mode
-	if s.cfg.EnableSingleReviewMode {
+	if s.cfg.SingleReviewMode {
 		s.markMRAsReviewed(projectID, mergeRequest)
 	}
 
@@ -67,7 +67,7 @@ func (s *Reviewer) hasAlreadyBeenReviewed(projectID string, mr *model.MergeReque
 	}
 
 	// Check if the TTL has expired
-	if s.cfg.ReviewTrackingTTL > 0 && time.Since(trackingInfo.LastReviewedAt) > s.cfg.ReviewTrackingTTL {
+	if s.cfg.TrackingTTL > 0 && time.Since(trackingInfo.LastReviewedAt) > s.cfg.TrackingTTL {
 		s.reviewedMRs.Delete(mrKey)
 		return false
 	}
@@ -128,7 +128,7 @@ func (s *Reviewer) processMergeRequestReview(ctx context.Context, request model.
 		"branch_to", request.MergeRequest.TargetBranch,
 		"commit_sha", lang.TruncateString(request.MergeRequest.SHA, 8),
 	)
-	log.Infof("starting merge request review: %s", request.MergeRequest.Title)
+	log.Infof("starting merge request review: '%s'", request.MergeRequest.Title)
 
 	reviewBundle := &reviewBundle{
 		result:  &model.ReviewResult{},
@@ -184,17 +184,17 @@ func (s *Reviewer) filterFilesForReview(request model.ReviewRequest, log logze.L
 			continue
 		}
 
-		if len(file.Diff) > s.cfg.FileFilter.MaxFileSize {
-			log.DebugIf(s.cfg.Verbose, "skipping due to size", "file", file.NewPath, "size", len(file.Diff), "max_size", s.cfg.FileFilter.MaxFileSize)
+		if len(file.Diff) > s.cfg.Filter.MaxFileSizeTokens {
+			log.DebugIf(s.cfg.Verbose, "skipping due to size", "file", file.NewPath, "size", len(file.Diff), "max_size", s.cfg.Filter.MaxFileSizeTokens)
 			continue
 		}
 
-		if s.isExcludedPath(file.NewPath) {
+		if s.cfg.isExcludedPath(file.NewPath) {
 			log.DebugIf(s.cfg.Verbose, "skipping excluded", "file", file.NewPath)
 			continue
 		}
 
-		if !s.isCodeFile(file.NewPath) {
+		if !s.cfg.isAllowedExtension(file.NewPath) {
 			log.DebugIf(s.cfg.Verbose, "skipping non-code", "file", file.NewPath)
 			continue
 		}
@@ -208,18 +208,18 @@ func (s *Reviewer) filterFilesForReview(request model.ReviewRequest, log logze.L
 		totalDiffLength += int64(len(file.NewPath))
 
 		// Limit number of files per MR
-		if len(filtered) >= s.cfg.MaxFilesPerMR {
-			log.Warn("reached maximum files limit", "limit", s.cfg.MaxFilesPerMR)
+		if len(filtered) >= s.cfg.Filter.MaxFiles {
+			log.Warn("reached maximum files limit", "limit", s.cfg.Filter.MaxFiles)
 			break
 		}
 	}
 
 	if len(filtered) == 0 {
-		log.InfoIf(s.cfg.Verbose, "no files to review after filtering")
+		s.logFlow("no files to review after filtering")
 		return nil, 0
 	}
 
-	log.InfoIf(s.cfg.Verbose, "found files to review",
+	s.logFlow("found files to review",
 		"total_files", len(filtered),
 		"diff_length", totalDiffLength,
 	)
