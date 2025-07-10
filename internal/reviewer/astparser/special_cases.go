@@ -16,7 +16,7 @@ import (
 type SpecialCasesHandler struct {
 	provider       interfaces.CodeProvider
 	astParser      *Parser
-	symbolAnalyzer *SymbolAnalyzer
+	symbolAnalyzer *ExternalRefsAnalyzer
 	diffParser     *DiffParser
 	log            logze.Logger
 }
@@ -104,7 +104,7 @@ func NewSpecialCasesHandler(provider interfaces.CodeProvider) *SpecialCasesHandl
 	return &SpecialCasesHandler{
 		provider:       provider,
 		astParser:      NewParser(),
-		symbolAnalyzer: NewSymbolAnalyzer(provider),
+		symbolAnalyzer: NewExternalRefsAnalyzer(provider),
 		diffParser:     NewDiffParser(),
 		log:            logze.With("component", "special_cases_handler"),
 	}

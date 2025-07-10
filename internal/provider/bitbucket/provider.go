@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -800,4 +801,228 @@ func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID in
 	}
 
 	return nil
+}
+
+// GetRepositoryInfo retrieves comprehensive repository information
+func (p *Provider) GetRepositoryInfo(ctx context.Context, projectID string) (*model.RepositoryInfo, error) {
+	// Parse workspace/repo_slug from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+	}
+	workspace, repoSlug := parts[0], parts[1]
+
+	// Get repository details
+	repoURL := fmt.Sprintf("repositories/%s/%s", workspace, repoSlug)
+	var repository bitbucketRepository
+	_, err := p.client.Get(ctx, repoURL, &repository)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get repository from Bitbucket")
+	}
+
+	// Get branches
+	branchesURL := fmt.Sprintf("repositories/%s/%s/refs/branches", workspace, repoSlug)
+	var branchesResponse struct {
+		Values []bitbucketBranch `json:"values"`
+	}
+	_, err = p.client.Get(ctx, branchesURL, &branchesResponse)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get branches from Bitbucket")
+	}
+
+	// Convert branches
+	var branchInfos []model.BranchInfo
+	for _, branch := range branchesResponse.Values {
+		branchInfo := model.BranchInfo{
+			Name:      branch.Name,
+			SHA:       branch.Target.Hash,
+			Protected: false, // Bitbucket doesn't provide this info in branch listing
+			Default:   branch.Name == repository.MainBranch.Name,
+		}
+
+		// Parse timestamp if available
+		if timestamp, err := time.Parse(time.RFC3339, branch.Target.Date); err == nil {
+			branchInfo.UpdatedAt = timestamp
+		}
+
+		branchInfos = append(branchInfos, branchInfo)
+	}
+
+	// Get repository languages (if available)
+	languageLines := make(map[string]int)
+	// Note: Bitbucket's API doesn't provide language statistics like GitHub/GitLab
+	// We would need to analyze the file tree to determine languages
+
+	// Parse timestamps
+	createdAt, _ := time.Parse(time.RFC3339, repository.CreatedOn)
+	updatedAt, _ := time.Parse(time.RFC3339, repository.UpdatedOn)
+
+	// Create repository info
+	repoInfo := &model.RepositoryInfo{
+		ID:            repository.UUID,
+		Name:          repository.Name,
+		FullName:      repository.FullName,
+		Description:   repository.Description,
+		URL:           repository.Links.HTML.Href,
+		DefaultBranch: repository.MainBranch.Name,
+		Size:          int64(repository.Size / 1024), // Convert bytes to KB
+		CreatedAt:     createdAt,
+		UpdatedAt:     updatedAt,
+		Branches:      branchInfos,
+		Languages:     languageLines,
+	}
+
+	return repoInfo, nil
+}
+
+// GetRepositorySnapshot retrieves all files in the repository at a specific commit
+func (p *Provider) GetRepositorySnapshot(ctx context.Context, projectID, commitSHA string) (*model.RepositorySnapshot, error) {
+	// Parse workspace/repo_slug from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+	}
+	workspace, repoSlug := parts[0], parts[1]
+
+	// Get commit details for timestamp
+	commitURL := fmt.Sprintf("repositories/%s/%s/commit/%s", workspace, repoSlug, commitSHA)
+	var commit bitbucketCommit
+	_, err := p.client.Get(ctx, commitURL, &commit)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get commit details")
+	}
+
+	// Use a recursive approach to get all files
+	files, err := p.getRepositoryFilesRecursive(ctx, workspace, repoSlug, commitSHA, "", "/")
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get repository files")
+	}
+
+	// Calculate total size
+	var totalSize int64
+	for _, file := range files {
+		totalSize += file.Size
+	}
+
+	// Parse timestamp
+	timestamp, _ := time.Parse(time.RFC3339, commit.Date)
+
+	snapshot := &model.RepositorySnapshot{
+		CommitSHA: commitSHA,
+		Timestamp: timestamp,
+		Files:     files,
+		TotalSize: totalSize,
+	}
+
+	return snapshot, nil
+}
+
+// getRepositoryFilesRecursive recursively fetches all files in the repository
+func (p *Provider) getRepositoryFilesRecursive(ctx context.Context, workspace, repoSlug, commitSHA, currentPath, parentPath string) ([]*model.RepositoryFile, error) {
+	var files []*model.RepositoryFile
+
+	// Build API URL for directory listing
+	apiURL := fmt.Sprintf("repositories/%s/%s/src/%s%s", workspace, repoSlug, commitSHA, currentPath)
+
+	var response struct {
+		Values []bitbucketFileNode `json:"values"`
+	}
+
+	_, err := p.client.Get(ctx, apiURL, &response)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get directory listing")
+	}
+
+	for _, node := range response.Values {
+		fullPath := currentPath
+		if fullPath != "/" {
+			fullPath = strings.TrimSuffix(fullPath, "/") + "/" + node.Path
+		} else {
+			fullPath = "/" + node.Path
+		}
+		fullPath = strings.TrimPrefix(fullPath, "/")
+
+		if node.Type == "commit_file" {
+			// This is a file, get its content
+			fileURL := fmt.Sprintf("repositories/%s/%s/src/%s/%s", workspace, repoSlug, commitSHA, fullPath)
+			resp, err := p.client.Get(ctx, fileURL)
+			if err != nil {
+				p.logger.Warn("failed to get file content", "path", fullPath, "error", err)
+				continue
+			}
+
+			content := string(resp.Body())
+			isBinary := p.isBinaryContent(content)
+
+			file := &model.RepositoryFile{
+				Path:        fullPath,
+				Content:     content,
+				Size:        int64(node.Size),
+				Mode:        "100644", // Default file mode for Bitbucket
+				IsBinary:    isBinary,
+				ContentType: p.getContentType(fullPath),
+			}
+
+			files = append(files, file)
+
+		} else if node.Type == "commit_directory" {
+			// This is a directory, recurse into it
+			subFiles, err := p.getRepositoryFilesRecursive(ctx, workspace, repoSlug, commitSHA, fullPath+"/", fullPath)
+			if err != nil {
+				p.logger.Warn("failed to get subdirectory files", "path", fullPath, "error", err)
+				continue
+			}
+			files = append(files, subFiles...)
+		}
+	}
+
+	return files, nil
+}
+
+// isBinaryContent heuristic to determine if content is binary
+func (p *Provider) isBinaryContent(content string) bool {
+	// Simple heuristic: if content contains null bytes, it's likely binary
+	return strings.Contains(content, "\x00")
+}
+
+// getContentType determines content type based on file extension
+func (p *Provider) getContentType(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+
+	switch ext {
+	case ".go":
+		return "text/x-go"
+	case ".js":
+		return "text/javascript"
+	case ".ts":
+		return "text/typescript"
+	case ".py":
+		return "text/x-python"
+	case ".java":
+		return "text/x-java"
+	case ".c", ".cpp", ".cc":
+		return "text/x-c"
+	case ".h", ".hpp":
+		return "text/x-c-header"
+	case ".css":
+		return "text/css"
+	case ".html", ".htm":
+		return "text/html"
+	case ".xml":
+		return "text/xml"
+	case ".json":
+		return "application/json"
+	case ".yaml", ".yml":
+		return "text/yaml"
+	case ".md":
+		return "text/markdown"
+	case ".txt":
+		return "text/plain"
+	case ".sh":
+		return "text/x-shellscript"
+	case ".sql":
+		return "text/x-sql"
+	default:
+		return "text/plain"
+	}
 }

@@ -62,12 +62,38 @@ type bitbucketPullRequest struct {
 }
 
 type bitbucketRepository struct {
-	UUID      string `json:"uuid"`
-	Name      string `json:"name"`
-	FullName  string `json:"full_name"`
+	UUID        string `json:"uuid"`
+	Name        string `json:"name"`
+	FullName    string `json:"full_name"`
+	Description string `json:"description"`
+	CreatedOn   string `json:"created_on"`
+	UpdatedOn   string `json:"updated_on"`
+	Size        int    `json:"size"`
+	MainBranch  struct {
+		Name string `json:"name"`
+	} `json:"mainbranch"`
 	Workspace struct {
 		Slug string `json:"slug"`
 	} `json:"workspace"`
+	Links struct {
+		HTML struct {
+			Href string `json:"href"`
+		} `json:"html"`
+	} `json:"links"`
+}
+
+type bitbucketBranch struct {
+	Name   string `json:"name"`
+	Target struct {
+		Hash string `json:"hash"`
+		Date string `json:"date"`
+	} `json:"target"`
+}
+
+type bitbucketFileNode struct {
+	Type string `json:"type"`
+	Path string `json:"path"`
+	Size int    `json:"size"`
 }
 
 type bitbucketComment struct {

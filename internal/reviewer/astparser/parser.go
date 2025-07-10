@@ -2,6 +2,7 @@ package astparser
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/maxbolgarin/errm"
@@ -74,9 +75,7 @@ type NodePosition struct {
 // NewParser creates a new AST parser with supported languages
 func NewParser() *Parser {
 	languages := make(map[ProgrammingLanguage]*sitter.Language, len(languagesParsers))
-	for name, parser := range languagesParsers {
-		languages[name] = parser
-	}
+	maps.Copy(languages, languagesParsers)
 	return &Parser{
 		languages: languages,
 	}
@@ -340,6 +339,38 @@ func (p *Parser) getNodeText(node *sitter.Node, content string) string {
 	}
 
 	return ""
+}
+
+// findAllSymbolsInFile finds all symbols in a file
+func (p *Parser) findAllSymbolsInFile(filePath, content string) ([]AffectedSymbol, error) {
+	rootNode, err := p.ParseFileToAST(context.Background(), filePath, content)
+	if err != nil {
+		return nil, err
+	}
+
+	var symbols []AffectedSymbol
+	p.walkASTForSymbols(rootNode, filePath, content, &symbols)
+
+	return symbols, nil
+}
+
+// walkASTForSymbols walks the AST to find all symbol definitions
+func (p *Parser) walkASTForSymbols(node *sitter.Node, filePath, content string, symbols *[]AffectedSymbol) {
+	if p.IsSymbolNode(node.Type()) {
+		symbol := p.ExtractSymbolFromNode(node, filePath, content)
+		if symbol.Name != "" {
+			*symbols = append(*symbols, symbol)
+		}
+	}
+
+	// Recursively check children
+	childCount := int(node.ChildCount())
+	for i := 0; i < childCount; i++ {
+		child := node.Child(i)
+		if child != nil {
+			p.walkASTForSymbols(child, filePath, content, symbols)
+		}
+	}
 }
 
 func getSymbolType(nodeType string) SymbolType {

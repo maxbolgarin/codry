@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -845,4 +846,213 @@ func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID in
 	}
 
 	return nil
+}
+
+// GetRepositoryInfo retrieves comprehensive repository information
+func (p *Provider) GetRepositoryInfo(ctx context.Context, projectID string) (*model.RepositoryInfo, error) {
+	// Parse owner/repo from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+	}
+	owner, repo := parts[0], parts[1]
+
+	// Get repository details
+	repository, _, err := p.client.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get repository from GitHub")
+	}
+
+	// Get branches
+	branchOpts := &github.BranchListOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+
+	var allBranches []*github.Branch
+	for {
+		branches, resp, err := p.client.Repositories.ListBranches(ctx, owner, repo, branchOpts)
+		if err != nil {
+			return nil, errm.Wrap(err, "failed to get branches from GitHub")
+		}
+
+		allBranches = append(allBranches, branches...)
+
+		if resp.NextPage == 0 {
+			break
+		}
+		branchOpts.Page = resp.NextPage
+	}
+
+	// Convert branches
+	var branchInfos []model.BranchInfo
+	for _, branch := range allBranches {
+		branchInfo := model.BranchInfo{
+			Name:      branch.GetName(),
+			SHA:       branch.GetCommit().GetSHA(),
+			Protected: branch.GetProtected(),
+			Default:   branch.GetName() == repository.GetDefaultBranch(),
+		}
+
+		// Get last commit timestamp for the branch
+		if branch.GetCommit() != nil {
+			commit, _, err := p.client.Repositories.GetCommit(ctx, owner, repo, branch.GetCommit().GetSHA(), nil)
+			if err == nil && commit.GetCommit().GetCommitter() != nil {
+				branchInfo.UpdatedAt = commit.GetCommit().GetCommitter().GetDate().Time
+			}
+		}
+
+		branchInfos = append(branchInfos, branchInfo)
+	}
+
+	// Get repository languages
+	languages, _, err := p.client.Repositories.ListLanguages(ctx, owner, repo)
+	if err != nil {
+		// Non-fatal error, continue without languages
+		p.logger.Warn("failed to get repository languages", "error", err)
+		languages = map[string]int{}
+	}
+
+	// Create repository info
+	repoInfo := &model.RepositoryInfo{
+		ID:            strconv.FormatInt(repository.GetID(), 10),
+		Name:          repository.GetName(),
+		FullName:      repository.GetFullName(),
+		Description:   repository.GetDescription(),
+		URL:           repository.GetHTMLURL(),
+		DefaultBranch: repository.GetDefaultBranch(),
+		Size:          int64(repository.GetSize()), // GitHub returns size in KB
+		CreatedAt:     repository.GetCreatedAt().Time,
+		UpdatedAt:     repository.GetUpdatedAt().Time,
+		Branches:      branchInfos,
+		Languages:     languages,
+	}
+
+	return repoInfo, nil
+}
+
+// GetRepositorySnapshot retrieves all files in the repository at a specific commit
+func (p *Provider) GetRepositorySnapshot(ctx context.Context, projectID, commitSHA string) (*model.RepositorySnapshot, error) {
+	// Parse owner/repo from projectID
+	parts := strings.Split(projectID, "/")
+	if len(parts) != 2 {
+		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+	}
+	owner, repo := parts[0], parts[1]
+
+	// Get commit details for timestamp
+	commit, _, err := p.client.Repositories.GetCommit(ctx, owner, repo, commitSHA, nil)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get commit details")
+	}
+
+	// Get repository tree recursively
+	tree, _, err := p.client.Git.GetTree(ctx, owner, repo, commitSHA, true)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get repository tree")
+	}
+
+	// Fetch file contents for each file
+	var files []*model.RepositoryFile
+	var totalSize int64
+
+	for _, entry := range tree.Entries {
+		// Skip directories and submodules
+		if entry.GetType() != "blob" {
+			continue
+		}
+
+		// Get file content using the blob SHA
+		blob, _, err := p.client.Git.GetBlob(ctx, owner, repo, entry.GetSHA())
+		if err != nil {
+			p.logger.Warn("failed to get blob content", "path", entry.GetPath(), "sha", entry.GetSHA(), "error", err)
+			continue
+		}
+
+		var content string
+		var isBinary bool
+
+		// Handle different blob encodings
+		switch blob.GetEncoding() {
+		case "base64":
+			decoded := blob.GetContent()
+			content = decoded
+			isBinary = p.isBinaryContent(content)
+		case "utf-8":
+			content = blob.GetContent()
+			isBinary = false
+		default:
+			// Assume binary for unknown encodings
+			content = blob.GetContent()
+			isBinary = true
+		}
+
+		repoFile := &model.RepositoryFile{
+			Path:        entry.GetPath(),
+			Content:     content,
+			Size:        int64(entry.GetSize()),
+			Mode:        entry.GetMode(),
+			IsBinary:    isBinary,
+			ContentType: p.getContentType(entry.GetPath()),
+		}
+
+		files = append(files, repoFile)
+		totalSize += repoFile.Size
+	}
+
+	snapshot := &model.RepositorySnapshot{
+		CommitSHA: commitSHA,
+		Timestamp: commit.GetCommit().GetCommitter().GetDate().Time,
+		Files:     files,
+		TotalSize: totalSize,
+	}
+
+	return snapshot, nil
+}
+
+// isBinaryContent heuristic to determine if content is binary
+func (p *Provider) isBinaryContent(content string) bool {
+	// Simple heuristic: if content contains null bytes, it's likely binary
+	return strings.Contains(content, "\x00")
+}
+
+// getContentType determines content type based on file extension
+func (p *Provider) getContentType(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+
+	switch ext {
+	case ".go":
+		return "text/x-go"
+	case ".js":
+		return "text/javascript"
+	case ".ts":
+		return "text/typescript"
+	case ".py":
+		return "text/x-python"
+	case ".java":
+		return "text/x-java"
+	case ".c", ".cpp", ".cc":
+		return "text/x-c"
+	case ".h", ".hpp":
+		return "text/x-c-header"
+	case ".css":
+		return "text/css"
+	case ".html", ".htm":
+		return "text/html"
+	case ".xml":
+		return "text/xml"
+	case ".json":
+		return "application/json"
+	case ".yaml", ".yml":
+		return "text/yaml"
+	case ".md":
+		return "text/markdown"
+	case ".txt":
+		return "text/plain"
+	case ".sh":
+		return "text/x-shellscript"
+	case ".sql":
+		return "text/x-sql"
+	default:
+		return "text/plain"
+	}
 }

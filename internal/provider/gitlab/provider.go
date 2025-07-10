@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"path/filepath"
+
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/errm"
@@ -733,4 +735,210 @@ func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID in
 	}
 
 	return nil
+}
+
+// GetRepositoryInfo retrieves comprehensive repository information
+func (p *Provider) GetRepositoryInfo(ctx context.Context, projectID string) (*model.RepositoryInfo, error) {
+	projectIDInt, err := strconv.Atoi(projectID)
+	if err != nil {
+		return nil, errm.Wrap(err, "invalid project ID")
+	}
+
+	// Get project details
+	project, _, err := p.client.Projects.GetProject(projectIDInt, nil)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get project from GitLab")
+	}
+
+	// Get branches
+	branches, _, err := p.client.Branches.ListBranches(projectIDInt, nil)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get branches from GitLab")
+	}
+
+	// Convert branches
+	var branchInfos []model.BranchInfo
+	for _, branch := range branches {
+		branchInfo := model.BranchInfo{
+			Name:      branch.Name,
+			SHA:       branch.Commit.ID,
+			Protected: branch.Protected,
+			Default:   branch.Name == project.DefaultBranch,
+			UpdatedAt: lang.Deref(branch.Commit.CommittedDate),
+		}
+		branchInfos = append(branchInfos, branchInfo)
+	}
+
+	// Get repository languages
+	languages, _, err := p.client.Projects.GetProjectLanguages(projectIDInt)
+	if err != nil {
+		// Non-fatal error, continue without languages
+		p.logger.Warn("failed to get project languages", "error", err)
+		languages = &gitlab.ProjectLanguages{}
+	}
+
+	// Convert languages (GitLab returns percentages as float32, we want lines count)
+	languageLines := make(map[string]int)
+	if languages != nil {
+		for lang, percentage := range *languages {
+			// Approximate lines based on percentage (this is an estimation)
+			// We'll use the size to estimate total lines and then calculate by percentage
+			estimatedTotalLines := int(float64(project.Statistics.RepositorySize) / 50) // Rough estimation: 50 bytes per line
+			lines := int(float64(estimatedTotalLines) * float64(percentage) / 100.0)
+			languageLines[lang] = lines
+		}
+	}
+
+	// Create repository info
+	repoInfo := &model.RepositoryInfo{
+		ID:            strconv.Itoa(project.ID),
+		Name:          project.Name,
+		FullName:      project.PathWithNamespace,
+		Description:   project.Description,
+		URL:           project.WebURL,
+		DefaultBranch: project.DefaultBranch,
+		Size:          int64(project.Statistics.RepositorySize / 1024), // Convert bytes to KB
+		CreatedAt:     lang.Deref(project.CreatedAt),
+		UpdatedAt:     lang.Deref(project.LastActivityAt),
+		Branches:      branchInfos,
+		Languages:     languageLines,
+	}
+
+	return repoInfo, nil
+}
+
+// GetRepositorySnapshot retrieves all files in the repository at a specific commit
+func (p *Provider) GetRepositorySnapshot(ctx context.Context, projectID, commitSHA string) (*model.RepositorySnapshot, error) {
+	projectIDInt, err := strconv.Atoi(projectID)
+	if err != nil {
+		return nil, errm.Wrap(err, "invalid project ID")
+	}
+
+	// Get commit details for timestamp
+	commit, _, err := p.client.Commits.GetCommit(projectIDInt, commitSHA, nil)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get commit details")
+	}
+
+	// Get repository tree recursively
+	treeOpts := &gitlab.ListTreeOptions{
+		Recursive: gitlab.Ptr(true),
+		Ref:       &commitSHA,
+		ListOptions: gitlab.ListOptions{
+			PerPage: 100, // Start with reasonable page size
+		},
+	}
+
+	var allTreeNodes []*gitlab.TreeNode
+	page := 1
+
+	// Fetch all pages of tree nodes
+	for {
+		treeOpts.Page = page
+		treeNodes, resp, err := p.client.Repositories.ListTree(projectIDInt, treeOpts)
+		if err != nil {
+			return nil, errm.Wrap(err, "failed to get repository tree")
+		}
+
+		allTreeNodes = append(allTreeNodes, treeNodes...)
+
+		if resp.NextPage == 0 {
+			break
+		}
+		page = resp.NextPage
+	}
+
+	// Fetch file contents for each file
+	var files []*model.RepositoryFile
+	var totalSize int64
+
+	for _, node := range allTreeNodes {
+		// Skip directories and submodules
+		if node.Type != "blob" {
+			continue
+		}
+
+		// Get file content
+		fileOpts := &gitlab.GetFileOptions{
+			Ref: &commitSHA,
+		}
+
+		file, _, err := p.client.RepositoryFiles.GetFile(projectIDInt, node.Path, fileOpts)
+		if err != nil {
+			p.logger.Warn("failed to get file content", "path", node.Path, "error", err)
+			continue
+		}
+
+		// Determine if file is binary
+		isBinary := p.isBinaryContent(file.Content)
+
+		repoFile := &model.RepositoryFile{
+			Path:        node.Path,
+			Content:     file.Content,
+			Size:        int64(file.Size),
+			Mode:        node.Mode,
+			IsBinary:    isBinary,
+			ContentType: p.getContentType(node.Path),
+		}
+
+		files = append(files, repoFile)
+		totalSize += repoFile.Size
+	}
+
+	snapshot := &model.RepositorySnapshot{
+		CommitSHA: commitSHA,
+		Timestamp: lang.Deref(commit.CommittedDate),
+		Files:     files,
+		TotalSize: totalSize,
+	}
+
+	return snapshot, nil
+}
+
+// isBinaryContent heuristic to determine if content is binary
+func (p *Provider) isBinaryContent(content string) bool {
+	// Simple heuristic: if content contains null bytes, it's likely binary
+	return strings.Contains(content, "\x00")
+}
+
+// getContentType determines content type based on file extension
+func (p *Provider) getContentType(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+
+	switch ext {
+	case ".go":
+		return "text/x-go"
+	case ".js":
+		return "text/javascript"
+	case ".ts":
+		return "text/typescript"
+	case ".py":
+		return "text/x-python"
+	case ".java":
+		return "text/x-java"
+	case ".c", ".cpp", ".cc":
+		return "text/x-c"
+	case ".h", ".hpp":
+		return "text/x-c-header"
+	case ".css":
+		return "text/css"
+	case ".html", ".htm":
+		return "text/html"
+	case ".xml":
+		return "text/xml"
+	case ".json":
+		return "application/json"
+	case ".yaml", ".yml":
+		return "text/yaml"
+	case ".md":
+		return "text/markdown"
+	case ".txt":
+		return "text/plain"
+	case ".sh":
+		return "text/x-shellscript"
+	case ".sql":
+		return "text/x-sql"
+	default:
+		return "text/plain"
+	}
 }

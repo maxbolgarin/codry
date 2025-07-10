@@ -9,6 +9,7 @@ import (
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/codry/internal/reviewer/astparser"
+	"github.com/maxbolgarin/codry/internal/reviewer/llmcontext"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/logze/v2"
 	"github.com/panjf2000/ants/v2"
@@ -31,10 +32,7 @@ type Reviewer struct {
 	reviewedMRs *abstract.SafeMap[string, reviewTrackingInfo]
 
 	// Context manager for gathering comprehensive MR metadata
-	contextManager *ContextManager
-
-	// Enhanced reviewer for detailed analysis
-	cbb *ContextBundleBuilder
+	contextBuilder *llmcontext.Builder
 }
 
 // reviewTrackingInfo stores information about when an MR was reviewed
@@ -64,8 +62,7 @@ func New(cfg Config, provider interfaces.CodeProvider, agent *agent.Agent) (*Rev
 		parser:         astparser.NewDiffParser(),
 		processedMRs:   abstract.NewSafeMapOfMaps[string, string, string](),
 		reviewedMRs:    abstract.NewSafeMap[string, reviewTrackingInfo](),
-		contextManager: NewContextManager(provider),
-		cbb:            NewContextBundleBuilder(provider),
+		contextBuilder: llmcontext.NewBuilder(provider),
 	}
 
 	return s, nil

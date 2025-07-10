@@ -11,14 +11,13 @@ import (
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/lang"
 	"github.com/maxbolgarin/logze/v2"
-	sitter "github.com/smacker/go-tree-sitter"
 )
 
-// ContextFinder orchestrates the process of gathering comprehensive context for code changes
-type ContextFinder struct {
+// ContextManager orchestrates the process of gathering comprehensive context for code changes
+type ContextManager struct {
 	provider       interfaces.CodeProvider
 	astParser      *Parser
-	symbolAnalyzer *SymbolAnalyzer
+	symbolAnalyzer *ExternalRefsAnalyzer
 	diffParser     *DiffParser
 	log            logze.Logger
 }
@@ -27,10 +26,10 @@ type ContextFinder struct {
 type ChangeType string
 
 const (
-	ChangeTypeModified ChangeType = "MODIFIED"
-	ChangeTypeAdded    ChangeType = "ADDED"
-	ChangeTypeDeleted  ChangeType = "DELETED"
-	ChangeTypeRenamed  ChangeType = "RENAMED"
+	ChangeTypeModified ChangeType = "Modified"
+	ChangeTypeAdded    ChangeType = "Added"
+	ChangeTypeDeleted  ChangeType = "Deleted"
+	ChangeTypeRenamed  ChangeType = "Renamed"
 )
 
 // ContextBundle represents the final structured context for LLM
@@ -42,7 +41,7 @@ type ContextBundle struct {
 type FileContext struct {
 	FilePath        string           `json:"file_path"`
 	ChangeType      ChangeType       `json:"change_type"`
-	DiffHunk        string           `json:"diff_hunk"`
+	Diff            string           `json:"diff_hunk"`
 	AffectedSymbols []AffectedSymbol `json:"affected_symbols"`
 	RelatedFiles    []RelatedFile    `json:"related_files"`
 	ConfigContext   *ConfigContext   `json:"config_context,omitempty"`
@@ -66,24 +65,32 @@ type ConfigContext struct {
 }
 
 // newContextFinder creates a new context finder
-func NewContextFinder(provider interfaces.CodeProvider) *ContextFinder {
-	return &ContextFinder{
+func NewContextFinder(provider interfaces.CodeProvider) *ContextManager {
+	return &ContextManager{
 		provider:       provider,
 		astParser:      NewParser(),
-		symbolAnalyzer: NewSymbolAnalyzer(provider),
+		symbolAnalyzer: NewExternalRefsAnalyzer(provider),
 		diffParser:     NewDiffParser(),
 		log:            logze.With("component", "context_finder"),
 	}
 }
 
+type ContextRequest struct {
+	ProjectID    string
+	MergeRequest *model.MergeRequest
+	FileDiffs    []*model.FileDiff
+	RepoDataHead *model.RepositorySnapshot
+	RepoDataBase *model.RepositorySnapshot
+}
+
 // GatherContext gathers comprehensive context for a merge request
-func (cf *ContextFinder) GatherContext(ctx context.Context, request model.ReviewRequest, fileDiffs []*model.FileDiff) (*ContextBundle, error) {
+func (cf *ContextManager) GatherContext(ctx context.Context, request ContextRequest) (*ContextBundle, error) {
 	bundle := &ContextBundle{
-		Files: make([]FileContext, 0, len(fileDiffs)),
+		Files: make([]FileContext, 0, len(request.FileDiffs)),
 	}
 
 	// Process each changed file
-	for _, fileDiff := range fileDiffs {
+	for _, fileDiff := range request.FileDiffs {
 		fileContext, err := cf.processFileDiff(ctx, request, fileDiff)
 		if err != nil {
 			cf.log.Warn("failed to process file diff", "error", err, "file", fileDiff.NewPath)
@@ -99,34 +106,38 @@ func (cf *ContextFinder) GatherContext(ctx context.Context, request model.Review
 }
 
 // processFileDiff processes a single file diff to extract context
-func (cf *ContextFinder) processFileDiff(ctx context.Context, request model.ReviewRequest, fileDiff *model.FileDiff) (*FileContext, error) {
-	// Determine change type
-	changeType := cf.determineChangeType(fileDiff)
-
+func (cf *ContextManager) processFileDiff(ctx context.Context, request ContextRequest, fileDiff *model.FileDiff) (*FileContext, error) {
 	// Create base file context
 	fileContext := &FileContext{
 		FilePath:        fileDiff.NewPath,
-		ChangeType:      changeType,
-		DiffHunk:        fileDiff.Diff,
+		ChangeType:      cf.determineChangeType(fileDiff),
+		Diff:            fileDiff.Diff,
 		AffectedSymbols: make([]AffectedSymbol, 0),
 		RelatedFiles:    make([]RelatedFile, 0),
 	}
 
+	if cf.isConfigFile(fileDiff.NewPath) {
+		return cf.processConfigFile(ctx, request, fileDiff, fileContext)
+	}
+
 	// Handle different change types
-	switch changeType {
+	switch fileContext.ChangeType {
 	case ChangeTypeAdded:
 		return cf.processAddedFile(ctx, request, fileDiff, fileContext)
+
 	case ChangeTypeDeleted:
 		return cf.processDeletedFile(ctx, request, fileDiff, fileContext)
+
 	case ChangeTypeModified, ChangeTypeRenamed:
 		return cf.processModifiedFile(ctx, request, fileDiff, fileContext)
+
 	}
 
 	return fileContext, nil
 }
 
 // determineChangeType determines the type of change for a file
-func (cf *ContextFinder) determineChangeType(fileDiff *model.FileDiff) ChangeType {
+func (cf *ContextManager) determineChangeType(fileDiff *model.FileDiff) ChangeType {
 	if fileDiff.IsNew {
 		return ChangeTypeAdded
 	}
@@ -140,17 +151,23 @@ func (cf *ContextFinder) determineChangeType(fileDiff *model.FileDiff) ChangeTyp
 }
 
 // processAddedFile processes a newly added file
-func (cf *ContextFinder) processAddedFile(ctx context.Context, request model.ReviewRequest, fileDiff *model.FileDiff, fileContext *FileContext) (*FileContext, error) {
+func (cf *ContextManager) processAddedFile(ctx context.Context, request ContextRequest, fileDiff *model.FileDiff, fileContext *FileContext) (*FileContext, error) {
 	// For new files, the entire file is "affected"
 	// Get the full file content
-	content, err := cf.provider.GetFileContent(ctx, request.ProjectID, fileDiff.NewPath, request.MergeRequest.SHA)
-	if err != nil {
+	var content string
+	for _, file := range request.RepoDataHead.Files {
+		if file.Path == fileDiff.NewPath {
+			content = file.Content
+			break
+		}
+	}
+	if content == "" {
 		// If we can't get the content, extract it from the diff
 		content = cf.extractContentFromDiff(fileDiff.Diff)
 	}
 
 	// Find all symbols in the new file
-	allSymbols, err := cf.findAllSymbolsInFile(fileDiff.NewPath, content)
+	allSymbols, err := cf.astParser.findAllSymbolsInFile(fileDiff.NewPath, content)
 	if err != nil {
 		cf.log.Warn("failed to find symbols in new file", "error", err, "file", fileDiff.NewPath)
 		return fileContext, nil
@@ -159,7 +176,7 @@ func (cf *ContextFinder) processAddedFile(ctx context.Context, request model.Rev
 	// For each symbol, find if it's already being used (cross-references within the same PR)
 	for _, symbol := range allSymbols {
 		// Analyze usage context
-		usageContext, err := cf.symbolAnalyzer.AnalyzeSymbolUsage(ctx, request.ProjectID, request.MergeRequest.SHA, symbol)
+		usageContext, err := cf.symbolAnalyzer.AnalyzeSymbolUsage(ctx, request.RepoDataHead, symbol)
 		if err != nil {
 			cf.log.Warn("failed to analyze symbol usage", "error", err, "symbol", symbol.Name)
 			continue
@@ -186,19 +203,24 @@ func (cf *ContextFinder) processAddedFile(ctx context.Context, request model.Rev
 }
 
 // processDeletedFile processes a deleted file
-func (cf *ContextFinder) processDeletedFile(ctx context.Context, request model.ReviewRequest, fileDiff *model.FileDiff, fileContext *FileContext) (*FileContext, error) {
+func (cf *ContextManager) processDeletedFile(ctx context.Context, request ContextRequest, fileDiff *model.FileDiff, fileContext *FileContext) (*FileContext, error) {
 	fileDiff.OldPath = lang.Check(fileDiff.OldPath, fileDiff.NewPath)
 
 	// For deleted files, we need to get the content from the base branch
-	content, err := cf.getBaseFileContent(ctx, request, fileDiff.OldPath)
-	if err != nil {
-
-		cf.log.Warn("failed to get base file content for deleted file", "error", err, "file", fileDiff.OldPath)
+	content := ""
+	for _, file := range request.RepoDataBase.Files {
+		if file.Path == fileDiff.OldPath {
+			content = file.Content
+			break
+		}
+	}
+	if content == "" {
+		cf.log.Warn("failed to get base file content for deleted file", "file", fileDiff.OldPath)
 		return fileContext, nil
 	}
 
 	// Find all symbols that were in the deleted file
-	allSymbols, err := cf.findAllSymbolsInFile(fileDiff.OldPath, content)
+	allSymbols, err := cf.astParser.findAllSymbolsInFile(fileDiff.OldPath, content)
 	if err != nil {
 		cf.log.Warn("failed to find symbols in deleted file", "error", err, "file", fileDiff.OldPath)
 		return fileContext, nil
@@ -206,7 +228,7 @@ func (cf *ContextFinder) processDeletedFile(ctx context.Context, request model.R
 
 	// For each symbol, find where it's still being used (this indicates broken code)
 	for _, symbol := range allSymbols {
-		usageContext, err := cf.symbolAnalyzer.AnalyzeSymbolUsage(ctx, request.ProjectID, request.MergeRequest.SHA, symbol)
+		usageContext, err := cf.symbolAnalyzer.AnalyzeSymbolUsage(ctx, request.RepoDataBase, symbol)
 		if err != nil {
 			cf.log.Warn("failed to analyze symbol usage for deleted symbol", "error", err, "symbol", symbol.Name)
 			continue
@@ -231,11 +253,7 @@ func (cf *ContextFinder) processDeletedFile(ctx context.Context, request model.R
 }
 
 // processModifiedFile processes a modified file
-func (cf *ContextFinder) processModifiedFile(ctx context.Context, request model.ReviewRequest, fileDiff *model.FileDiff, fileContext *FileContext) (*FileContext, error) {
-	// Check if this is a configuration file
-	if cf.isConfigFile(fileDiff.NewPath) {
-		return cf.processConfigFile(ctx, request, fileDiff, fileContext)
-	}
+func (cf *ContextManager) processModifiedFile(ctx context.Context, request ContextRequest, fileDiff *model.FileDiff, fileContext *FileContext) (*FileContext, error) {
 
 	// Parse the diff to get changed lines
 	diffLines, err := cf.diffParser.ParseDiffToLines(fileDiff.Diff)
@@ -272,7 +290,7 @@ func (cf *ContextFinder) processModifiedFile(ctx context.Context, request model.
 	// For each affected symbol, gather comprehensive context
 	for _, symbol := range affectedSymbols {
 		// Analyze symbol usage
-		usageContext, err := cf.symbolAnalyzer.AnalyzeSymbolUsage(ctx, request.ProjectID, request.MergeRequest.SHA, symbol)
+		usageContext, err := cf.symbolAnalyzer.AnalyzeSymbolUsage(ctx, request.RepoDataHead, symbol)
 		if err != nil {
 			cf.log.Warn("failed to analyze symbol usage", "error", err, "symbol", symbol.Name)
 			continue
@@ -292,9 +310,9 @@ func (cf *ContextFinder) processModifiedFile(ctx context.Context, request model.
 
 		// Add dependency information
 		for _, dep := range usageContext.Dependencies {
-			if dep.Source == "internal" && dep.FilePath != "" {
+			if dep.SourceFile == "internal" && dep.SymbolName != "" {
 				relatedFile := RelatedFile{
-					FilePath:         dep.FilePath,
+					FilePath:         dep.SourceFile,
 					Relationship:     "dependency",
 					RelevantFunction: dep.SymbolName,
 				}
@@ -309,7 +327,7 @@ func (cf *ContextFinder) processModifiedFile(ctx context.Context, request model.
 }
 
 // processConfigFile processes changes in configuration files
-func (cf *ContextFinder) processConfigFile(ctx context.Context, request model.ReviewRequest, fileDiff *model.FileDiff, fileContext *FileContext) (*FileContext, error) {
+func (cf *ContextManager) processConfigFile(ctx context.Context, request ContextRequest, fileDiff *model.FileDiff, fileContext *FileContext) (*FileContext, error) {
 	// Extract changed configuration keys
 	changedKeys := cf.extractChangedConfigKeys(fileDiff.Diff)
 
@@ -345,7 +363,7 @@ func (cf *ContextFinder) processConfigFile(ctx context.Context, request model.Re
 // Helper methods
 
 // extractContentFromDiff extracts file content from diff (for new files)
-func (cf *ContextFinder) extractContentFromDiff(diff string) string {
+func (cf *ContextManager) extractContentFromDiff(diff string) string {
 	lines := strings.Split(diff, "\n")
 	var content []string
 
@@ -358,47 +376,15 @@ func (cf *ContextFinder) extractContentFromDiff(diff string) string {
 	return strings.Join(content, "\n")
 }
 
-// findAllSymbolsInFile finds all symbols in a file
-func (cf *ContextFinder) findAllSymbolsInFile(filePath, content string) ([]AffectedSymbol, error) {
-	rootNode, err := cf.astParser.ParseFileToAST(context.Background(), filePath, content)
-	if err != nil {
-		return nil, err
-	}
-
-	var symbols []AffectedSymbol
-	cf.walkASTForSymbols(rootNode, filePath, content, &symbols)
-
-	return symbols, nil
-}
-
-// walkASTForSymbols walks the AST to find all symbol definitions
-func (cf *ContextFinder) walkASTForSymbols(node *sitter.Node, filePath, content string, symbols *[]AffectedSymbol) {
-	if cf.astParser.IsSymbolNode(node.Type()) {
-		symbol := cf.astParser.ExtractSymbolFromNode(node, filePath, content)
-		if symbol.Name != "" {
-			*symbols = append(*symbols, symbol)
-		}
-	}
-
-	// Recursively check children
-	childCount := int(node.ChildCount())
-	for i := 0; i < childCount; i++ {
-		child := node.Child(i)
-		if child != nil {
-			cf.walkASTForSymbols(child, filePath, content, symbols)
-		}
-	}
-}
-
 // getBaseFileContent gets the file content from the base branch
-func (cf *ContextFinder) getBaseFileContent(ctx context.Context, request model.ReviewRequest, filePath string) (string, error) {
+func (cf *ContextManager) getBaseFileContent(ctx context.Context, request model.ReviewRequest, filePath string) (string, error) {
 	// This would ideally get the content from the base branch
 	// For now, we'll try to get it from the current SHA as a fallback
 	return cf.provider.GetFileContent(ctx, request.ProjectID, filePath, request.MergeRequest.SHA)
 }
 
 // isConfigFile checks if a file is a configuration file
-func (cf *ContextFinder) isConfigFile(filePath string) bool {
+func (cf *ContextManager) isConfigFile(filePath string) bool {
 	configExtensions := []string{".yaml", ".yml", ".json", ".toml", ".ini", ".conf", ".config", ".env"}
 	configFiles := []string{"makefile", "dockerfile", "docker-compose.yml", "go.mod", "package.json", "requirements.txt"}
 
@@ -423,7 +409,7 @@ func (cf *ContextFinder) isConfigFile(filePath string) bool {
 }
 
 // extractChangedConfigKeys extracts configuration keys that were changed
-func (cf *ContextFinder) extractChangedConfigKeys(diff string) []string {
+func (cf *ContextManager) extractChangedConfigKeys(diff string) []string {
 	var keys []string
 	lines := strings.Split(diff, "\n")
 
@@ -441,7 +427,7 @@ func (cf *ContextFinder) extractChangedConfigKeys(diff string) []string {
 }
 
 // extractKeyFromConfigLine extracts a configuration key from a config file line
-func (cf *ContextFinder) extractKeyFromConfigLine(line string) string {
+func (cf *ContextManager) extractKeyFromConfigLine(line string) string {
 	line = strings.TrimSpace(line)
 
 	// YAML style: key: value
@@ -466,7 +452,7 @@ func (cf *ContextFinder) extractKeyFromConfigLine(line string) string {
 }
 
 // detectConfigType detects the type of configuration file
-func (cf *ContextFinder) detectConfigType(filePath string) string {
+func (cf *ContextManager) detectConfigType(filePath string) string {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	filename := strings.ToLower(filepath.Base(filePath))
 
@@ -494,7 +480,7 @@ func (cf *ContextFinder) detectConfigType(filePath string) string {
 }
 
 // assessConfigImpact provides an impact assessment for configuration changes
-func (cf *ContextFinder) assessConfigImpact(changedKeys []string) string {
+func (cf *ContextManager) assessConfigImpact(changedKeys []string) string {
 	if len(changedKeys) == 0 {
 		return "No configuration keys changed"
 	}
@@ -538,7 +524,7 @@ func (cf *ContextFinder) assessConfigImpact(changedKeys []string) string {
 }
 
 // extractPackageFromPath extracts package/module name from file path
-func (cf *ContextFinder) extractPackageFromPath(filePath string) string {
+func (cf *ContextManager) extractPackageFromPath(filePath string) string {
 	dir := filepath.Dir(filePath)
 	if dir == "." {
 		return "main"

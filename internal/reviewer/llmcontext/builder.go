@@ -1,4 +1,4 @@
-package reviewer
+package llmcontext
 
 import (
 	"context"
@@ -15,109 +15,94 @@ import (
 	"github.com/maxbolgarin/logze/v2"
 )
 
-// ContextBundleBuilder builds comprehensive context bundles for LLM analysis
-type ContextBundleBuilder struct {
+// Builder builds comprehensive context bundles for LLM analysis
+type Builder struct {
 	provider       interfaces.CodeProvider
-	contextFinder  *astparser.ContextFinder
-	symbolAnalyzer *astparser.SymbolAnalyzer
+	contextFinder  *astparser.ContextManager
+	symbolAnalyzer *astparser.ExternalRefsAnalyzer
 	diffParser     *astparser.DiffParser
 	astParser      *astparser.Parser
 	log            logze.Logger
+
+	mrContextBuilder *mrContextBuilder
 }
 
-// LLMContextBundle represents the final structured context for LLM
-type LLMContextBundle struct {
-	Overview OverviewContext         `json:"overview"`
-	Files    []astparser.FileContext `json:"files"`
-	Summary  SummaryContext          `json:"summary"`
-	Metadata MetadataContext         `json:"metadata"`
-}
-
-// OverviewContext provides high-level overview of the changes
-type OverviewContext struct {
-	TotalFiles        int                       `json:"total_files"`
-	TotalSymbols      int                       `json:"total_symbols"`
-	ImpactScore       float64                   `json:"impact_score"`
-	ChangeComplexity  astparser.ComplexityLevel `json:"change_complexity"`
-	HighImpactChanges []string                  `json:"high_impact_changes"`
-	ConfigChanges     []ConfigChangeInfo        `json:"config_changes"`
-	DeletedSymbols    []DeletedSymbolInfo       `json:"deleted_symbols"`
-	PotentialIssues   []string                  `json:"potential_issues"`
-}
-
-// SummaryContext provides summary information for the LLM
-type SummaryContext struct {
-	ChangesSummary  string         `json:"changes_summary"`
-	AffectedAreas   []string       `json:"affected_areas"`
-	ReviewFocus     []string       `json:"review_focus"`
-	RiskAssessment  RiskAssessment `json:"risk_assessment"`
-	Recommendations []string       `json:"recommendations"`
-}
-
-// MetadataContext provides metadata about the analysis
-type MetadataContext struct {
-	AnalysisTimestamp  string   `json:"analysis_timestamp"`
-	AnalysisVersion    string   `json:"analysis_version"`
-	SupportedLanguages []string `json:"supported_languages"`
-	Limitations        []string `json:"limitations"`
-}
-
-// ConfigChangeInfo represents information about configuration changes
-type ConfigChangeInfo struct {
-	FilePath      string   `json:"file_path"`
-	ConfigType    string   `json:"config_type"`
-	ChangedKeys   []string `json:"changed_keys"`
-	Impact        string   `json:"impact"`
-	AffectedFiles []string `json:"affected_files"`
-}
-
-// DeletedSymbolInfo represents information about deleted symbols
-type DeletedSymbolInfo struct {
-	Symbol           astparser.AffectedSymbol `json:"symbol"`
-	BrokenReferences []astparser.RelatedFile  `json:"broken_references"`
-	Impact           string                   `json:"impact"`
-}
-
-// RiskAssessment provides risk assessment for the changes
-type RiskAssessment struct {
-	Level       RiskLevel `json:"level"`
-	Score       float64   `json:"score"`
-	Factors     []string  `json:"factors"`
-	Mitigations []string  `json:"mitigations"`
-}
-
-// RiskLevel represents the risk level of changes
-type RiskLevel string
-
-const (
-	RiskLevelLow      RiskLevel = "low"
-	RiskLevelMedium   RiskLevel = "medium"
-	RiskLevelHigh     RiskLevel = "high"
-	RiskLevelCritical RiskLevel = "critical"
-)
-
-// NewContextBundleBuilder creates a new context bundle builder
-func NewContextBundleBuilder(provider interfaces.CodeProvider) *ContextBundleBuilder {
-	return &ContextBundleBuilder{
-		provider:       provider,
-		contextFinder:  astparser.NewContextFinder(provider),
-		symbolAnalyzer: astparser.NewSymbolAnalyzer(provider),
-		diffParser:     astparser.NewDiffParser(),
-		astParser:      astparser.NewParser(),
-		log:            logze.With("component", "context_bundle_builder"),
+// NewBuilder creates a new context bundle builder
+func NewBuilder(provider interfaces.CodeProvider) *Builder {
+	return &Builder{
+		provider:         provider,
+		contextFinder:    astparser.NewContextFinder(provider),
+		symbolAnalyzer:   astparser.NewExternalRefsAnalyzer(provider),
+		diffParser:       astparser.NewDiffParser(),
+		astParser:        astparser.NewParser(),
+		log:              logze.With("component", "context_bundle_builder"),
+		mrContextBuilder: newMRContextBuilder(provider),
 	}
 }
 
-// BuildContextBundle builds a comprehensive context bundle for LLM analysis
-func (cbb *ContextBundleBuilder) BuildContextBundle(ctx context.Context, request model.ReviewRequest, fileDiffs []*model.FileDiff) (*LLMContextBundle, error) {
+// BuildContext builds a comprehensive context bundle for LLM analysis
+func (cbb *Builder) BuildContext(ctx context.Context, projectID string, mrIID int) (*ContextBundle, error) {
+	mr, err := cbb.provider.GetMergeRequest(ctx, projectID, mrIID)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get merge request")
+	}
+	diffs, err := cbb.provider.GetMergeRequestDiffs(ctx, projectID, mrIID)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get MR diffs")
+	}
+	allComments, err := cbb.provider.GetComments(ctx, projectID, mrIID)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get comments")
+	}
+
+	request := mrContextRequest{
+		ProjectID:    projectID,
+		MergeRequest: mr,
+		Diffs:        diffs,
+		Comments:     allComments,
+	}
+
+	mrContext, err := cbb.mrContextBuilder.gatherMRContext(ctx, request)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get MR context")
+	}
+
+	repoInfo, err := cbb.provider.GetRepositoryInfo(ctx, projectID)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get repository info")
+	}
+
+	repoDataHead, err := cbb.provider.GetRepositorySnapshot(ctx, projectID, mr.SHA)
+	if err != nil {
+		return nil, errm.Wrap(err, "failed to get repository data")
+	}
+
+	var repoDataBase *model.RepositorySnapshot
+	for _, branch := range repoInfo.Branches {
+		if branch.Name == mr.TargetBranch {
+			repoDataBase, err = cbb.provider.GetRepositorySnapshot(ctx, projectID, branch.SHA)
+			if err != nil {
+				return nil, errm.Wrap(err, "failed to get repository data")
+			}
+		}
+	}
+
+	contextRequest := astparser.ContextRequest{
+		ProjectID:    projectID,
+		MergeRequest: mr,
+		FileDiffs:    diffs,
+		RepoDataHead: repoDataHead,
+		RepoDataBase: repoDataBase,
+	}
+
 	// Gather basic context using ContextFinder
-	basicContext, err := cbb.contextFinder.GatherContext(ctx, request, fileDiffs)
+	basicContext, err := cbb.contextFinder.GatherContext(ctx, contextRequest)
 	if err != nil {
 		return nil, errm.Wrap(err, "failed to gather basic context")
 	}
 
 	// Enhance with detailed analysis
-	enhancedFiles, err := cbb.enhanceFileContexts(ctx, request, basicContext.Files)
+	enhancedFiles, err := cbb.enhanceFileContexts(ctx, contextRequest, basicContext.Files)
 	if err != nil {
 		cbb.log.Warn("failed to enhance file contexts", "error", err)
 		// Continue with basic context
@@ -133,18 +118,19 @@ func (cbb *ContextBundleBuilder) BuildContextBundle(ctx context.Context, request
 	// Build metadata
 	metadata := cbb.buildMetadata()
 
-	bundle := &LLMContextBundle{
-		Overview: overview,
-		Files:    enhancedFiles,
-		Summary:  summary,
-		Metadata: metadata,
+	bundle := &ContextBundle{
+		Overview:  overview,
+		Files:     enhancedFiles,
+		Summary:   summary,
+		Metadata:  metadata,
+		MRContext: mrContext,
 	}
 
 	return bundle, nil
 }
 
 // enhanceFileContexts enhances file contexts with detailed symbol analysis
-func (cbb *ContextBundleBuilder) enhanceFileContexts(ctx context.Context, request model.ReviewRequest, files []astparser.FileContext) ([]astparser.FileContext, error) {
+func (cbb *Builder) enhanceFileContexts(ctx context.Context, request astparser.ContextRequest, files []astparser.FileContext) ([]astparser.FileContext, error) {
 	var enhancedFiles []astparser.FileContext
 
 	for _, fileContext := range files {
@@ -162,7 +148,7 @@ func (cbb *ContextBundleBuilder) enhanceFileContexts(ctx context.Context, reques
 }
 
 // enhanceFileContext enhances a single file context with detailed analysis
-func (cbb *ContextBundleBuilder) enhanceFileContext(ctx context.Context, request model.ReviewRequest, fileContext astparser.FileContext) (*astparser.FileContext, error) {
+func (cbb *Builder) enhanceFileContext(ctx context.Context, request astparser.ContextRequest, fileContext astparser.FileContext) (*astparser.FileContext, error) {
 	enhanced := fileContext
 
 	// Get file content for detailed analysis
@@ -177,8 +163,8 @@ func (cbb *ContextBundleBuilder) enhanceFileContext(ctx context.Context, request
 	}
 
 	// Perform diff impact analysis
-	if content != "" && fileContext.DiffHunk != "" {
-		impact, err := cbb.diffParser.AnalyzeDiffImpact(fileContext.DiffHunk, fileContext.FilePath, content, cbb.astParser)
+	if content != "" && fileContext.Diff != "" {
+		impact, err := cbb.diffParser.AnalyzeDiffImpact(fileContext.Diff, fileContext.FilePath, content, cbb.astParser)
 		if err == nil {
 			// Add impact information to existing symbols or create new ones
 			enhanced.AffectedSymbols = cbb.mergeSymbolInformation(enhanced.AffectedSymbols, impact.AffectedSymbols)
@@ -187,7 +173,7 @@ func (cbb *ContextBundleBuilder) enhanceFileContext(ctx context.Context, request
 
 	// Enhance symbol information with usage context
 	for i, symbol := range enhanced.AffectedSymbols {
-		usageContext, err := cbb.symbolAnalyzer.AnalyzeSymbolUsage(ctx, request.ProjectID, request.MergeRequest.SHA, symbol)
+		usageContext, err := cbb.symbolAnalyzer.AnalyzeSymbolUsage(ctx, request.RepoDataHead, symbol)
 		if err != nil {
 			cbb.log.Warn("failed to analyze symbol usage", "error", err, "symbol", symbol.Name)
 			continue
@@ -204,7 +190,7 @@ func (cbb *ContextBundleBuilder) enhanceFileContext(ctx context.Context, request
 }
 
 // mergeSymbolInformation merges symbol information from different sources
-func (cbb *ContextBundleBuilder) mergeSymbolInformation(existing []astparser.AffectedSymbol, additional []astparser.AffectedSymbol) []astparser.AffectedSymbol {
+func (cbb *Builder) mergeSymbolInformation(existing []astparser.AffectedSymbol, additional []astparser.AffectedSymbol) []astparser.AffectedSymbol {
 	symbolMap := make(map[string]astparser.AffectedSymbol)
 
 	// Add existing symbols
@@ -235,12 +221,12 @@ func (cbb *ContextBundleBuilder) mergeSymbolInformation(existing []astparser.Aff
 }
 
 // getSymbolKey generates a unique key for a symbol
-func (cbb *ContextBundleBuilder) getSymbolKey(symbol astparser.AffectedSymbol) string {
+func (cbb *Builder) getSymbolKey(symbol astparser.AffectedSymbol) string {
 	return fmt.Sprintf("%s:%s:%d:%d", symbol.FilePath, symbol.Name, symbol.StartLine, symbol.EndLine)
 }
 
 // mergeSymbols merges two symbol objects
-func (cbb *ContextBundleBuilder) mergeSymbols(symbol1, symbol2 astparser.AffectedSymbol) astparser.AffectedSymbol {
+func (cbb *Builder) mergeSymbols(symbol1, symbol2 astparser.AffectedSymbol) astparser.AffectedSymbol {
 	merged := symbol1
 
 	// Use the most detailed information
@@ -270,7 +256,7 @@ func (cbb *ContextBundleBuilder) mergeSymbols(symbol1, symbol2 astparser.Affecte
 }
 
 // convertUsageToRelatedFiles converts symbol usage context to related files
-func (cbb *ContextBundleBuilder) convertUsageToRelatedFiles(usage astparser.SymbolUsageContext) []astparser.RelatedFile {
+func (cbb *Builder) convertUsageToRelatedFiles(usage astparser.SymbolUsageContext) []astparser.RelatedFile {
 	var relatedFiles []astparser.RelatedFile
 
 	// Add callers
@@ -287,9 +273,9 @@ func (cbb *ContextBundleBuilder) convertUsageToRelatedFiles(usage astparser.Symb
 
 	// Add dependencies (only internal ones)
 	for _, dep := range usage.Dependencies {
-		if dep.Source == "internal" && dep.FilePath != "" {
+		if dep.SourceFile == "internal" && dep.SymbolName != "" {
 			relatedFile := astparser.RelatedFile{
-				FilePath:         dep.FilePath,
+				FilePath:         dep.SourceFile,
 				Relationship:     "dependency",
 				RelevantFunction: dep.SymbolName,
 			}
@@ -301,7 +287,7 @@ func (cbb *ContextBundleBuilder) convertUsageToRelatedFiles(usage astparser.Symb
 }
 
 // enhanceSymbolWithContext enhances a symbol with usage context information
-func (cbb *ContextBundleBuilder) enhanceSymbolWithContext(symbol astparser.AffectedSymbol, usage astparser.SymbolUsageContext) astparser.AffectedSymbol {
+func (cbb *Builder) enhanceSymbolWithContext(symbol astparser.AffectedSymbol, usage astparser.SymbolUsageContext) astparser.AffectedSymbol {
 	enhanced := symbol
 
 	// Update context information
@@ -314,7 +300,7 @@ func (cbb *ContextBundleBuilder) enhanceSymbolWithContext(symbol astparser.Affec
 }
 
 // buildOverview builds the overview context
-func (cbb *ContextBundleBuilder) buildOverview(files []astparser.FileContext) OverviewContext {
+func (cbb *Builder) buildOverview(files []astparser.FileContext) OverviewContext {
 	overview := OverviewContext{
 		TotalFiles:        len(files),
 		TotalSymbols:      0,
@@ -385,7 +371,7 @@ func (cbb *ContextBundleBuilder) buildOverview(files []astparser.FileContext) Ov
 }
 
 // buildSummary builds the summary context
-func (cbb *ContextBundleBuilder) buildSummary(files []astparser.FileContext, overview OverviewContext) SummaryContext {
+func (cbb *Builder) buildSummary(files []astparser.FileContext, overview OverviewContext) SummaryContext {
 	summary := SummaryContext{
 		AffectedAreas:   make([]string, 0),
 		ReviewFocus:     make([]string, 0),
@@ -411,7 +397,7 @@ func (cbb *ContextBundleBuilder) buildSummary(files []astparser.FileContext, ove
 }
 
 // buildMetadata builds the metadata context
-func (cbb *ContextBundleBuilder) buildMetadata() MetadataContext {
+func (cbb *Builder) buildMetadata() MetadataContext {
 	return MetadataContext{
 		AnalysisTimestamp:  fmt.Sprintf("%d", time.Now().Unix()),
 		AnalysisVersion:    "1.0",
@@ -428,7 +414,7 @@ func (cbb *ContextBundleBuilder) buildMetadata() MetadataContext {
 // Helper methods for building overview and summary
 
 // assessFileComplexity assesses the complexity of changes in a file
-func (cbb *ContextBundleBuilder) assessFileComplexity(file astparser.FileContext) astparser.ComplexityLevel {
+func (cbb *Builder) assessFileComplexity(file astparser.FileContext) astparser.ComplexityLevel {
 	symbolCount := len(file.AffectedSymbols)
 	relatedCount := len(file.RelatedFiles)
 
@@ -444,7 +430,7 @@ func (cbb *ContextBundleBuilder) assessFileComplexity(file astparser.FileContext
 }
 
 // calculateFileImpactScore calculates an impact score for a file
-func (cbb *ContextBundleBuilder) calculateFileImpactScore(file astparser.FileContext) float64 {
+func (cbb *Builder) calculateFileImpactScore(file astparser.FileContext) float64 {
 	score := 0.0
 
 	// Base score from symbol count
@@ -480,7 +466,7 @@ func (cbb *ContextBundleBuilder) calculateFileImpactScore(file astparser.FileCon
 }
 
 // compareComplexity compares two complexity levels
-func (cbb *ContextBundleBuilder) compareComplexity(a, b astparser.ComplexityLevel) int {
+func (cbb *Builder) compareComplexity(a, b astparser.ComplexityLevel) int {
 	levels := map[astparser.ComplexityLevel]int{
 		astparser.ComplexityLow:      1,
 		astparser.ComplexityMedium:   2,
@@ -492,7 +478,7 @@ func (cbb *ContextBundleBuilder) compareComplexity(a, b astparser.ComplexityLeve
 }
 
 // extractFilePathsFromRelated extracts file paths from related files
-func (cbb *ContextBundleBuilder) extractFilePathsFromRelated(relatedFiles []astparser.RelatedFile) []string {
+func (cbb *Builder) extractFilePathsFromRelated(relatedFiles []astparser.RelatedFile) []string {
 	var paths []string
 	for _, rf := range relatedFiles {
 		paths = append(paths, rf.FilePath)
@@ -501,7 +487,7 @@ func (cbb *ContextBundleBuilder) extractFilePathsFromRelated(relatedFiles []astp
 }
 
 // findBrokenReferences finds broken references from related files
-func (cbb *ContextBundleBuilder) findBrokenReferences(relatedFiles []astparser.RelatedFile) []astparser.RelatedFile {
+func (cbb *Builder) findBrokenReferences(relatedFiles []astparser.RelatedFile) []astparser.RelatedFile {
 	var broken []astparser.RelatedFile
 	for _, rf := range relatedFiles {
 		if rf.Relationship == "broken_caller" || rf.Relationship == "caller" {
@@ -512,7 +498,7 @@ func (cbb *ContextBundleBuilder) findBrokenReferences(relatedFiles []astparser.R
 }
 
 // assessDeletionImpact assesses the impact of deleting a symbol
-func (cbb *ContextBundleBuilder) assessDeletionImpact(symbol astparser.AffectedSymbol, relatedFiles []astparser.RelatedFile) string {
+func (cbb *Builder) assessDeletionImpact(symbol astparser.AffectedSymbol, relatedFiles []astparser.RelatedFile) string {
 	brokenCount := len(cbb.findBrokenReferences(relatedFiles))
 
 	if brokenCount == 0 {
@@ -525,7 +511,7 @@ func (cbb *ContextBundleBuilder) assessDeletionImpact(symbol astparser.AffectedS
 }
 
 // identifyFileIssues identifies potential issues in a file
-func (cbb *ContextBundleBuilder) identifyFileIssues(file astparser.FileContext) []string {
+func (cbb *Builder) identifyFileIssues(file astparser.FileContext) []string {
 	var issues []string
 
 	// Large number of symbols affected
@@ -549,7 +535,7 @@ func (cbb *ContextBundleBuilder) identifyFileIssues(file astparser.FileContext) 
 }
 
 // generateChangesSummary generates a summary of changes
-func (cbb *ContextBundleBuilder) generateChangesSummary(files []astparser.FileContext, overview OverviewContext) string {
+func (cbb *Builder) generateChangesSummary(files []astparser.FileContext, overview OverviewContext) string {
 	var parts []string
 
 	parts = append(parts, fmt.Sprintf("%d files modified with %d symbols affected", overview.TotalFiles, overview.TotalSymbols))
@@ -578,7 +564,7 @@ func (cbb *ContextBundleBuilder) generateChangesSummary(files []astparser.FileCo
 }
 
 // identifyAffectedAreas identifies affected areas/modules
-func (cbb *ContextBundleBuilder) identifyAffectedAreas(files []astparser.FileContext) []string {
+func (cbb *Builder) identifyAffectedAreas(files []astparser.FileContext) []string {
 	areaMap := make(map[string]int)
 
 	for _, file := range files {
@@ -603,7 +589,7 @@ func (cbb *ContextBundleBuilder) identifyAffectedAreas(files []astparser.FileCon
 }
 
 // determineReviewFocus determines what the review should focus on
-func (cbb *ContextBundleBuilder) determineReviewFocus(files []astparser.FileContext, overview OverviewContext) []string {
+func (cbb *Builder) determineReviewFocus(files []astparser.FileContext, overview OverviewContext) []string {
 	var focus []string
 
 	// High-impact changes
@@ -643,7 +629,7 @@ func (cbb *ContextBundleBuilder) determineReviewFocus(files []astparser.FileCont
 }
 
 // assessRisk assesses the overall risk of the changes
-func (cbb *ContextBundleBuilder) assessRisk(overview OverviewContext) RiskAssessment {
+func (cbb *Builder) assessRisk(overview OverviewContext) RiskAssessment {
 	assessment := RiskAssessment{
 		Level:       RiskLevelLow,
 		Score:       overview.ImpactScore,
@@ -693,7 +679,7 @@ func (cbb *ContextBundleBuilder) assessRisk(overview OverviewContext) RiskAssess
 }
 
 // generateRecommendations generates recommendations for the review
-func (cbb *ContextBundleBuilder) generateRecommendations(files []astparser.FileContext, overview OverviewContext) []string {
+func (cbb *Builder) generateRecommendations(files []astparser.FileContext, overview OverviewContext) []string {
 	var recommendations []string
 
 	// Based on complexity
@@ -735,7 +721,7 @@ func (cbb *ContextBundleBuilder) generateRecommendations(files []astparser.FileC
 }
 
 // generateMitigations generates risk mitigations
-func (cbb *ContextBundleBuilder) generateMitigations(level RiskLevel, factors []string) []string {
+func (cbb *Builder) generateMitigations(level RiskLevel, factors []string) []string {
 	var mitigations []string
 
 	switch level {
@@ -772,7 +758,7 @@ func (cbb *ContextBundleBuilder) generateMitigations(level RiskLevel, factors []
 }
 
 // countChangeTypes counts different types of changes
-func (cbb *ContextBundleBuilder) countChangeTypes(files []astparser.FileContext) (added, modified, deleted int) {
+func (cbb *Builder) countChangeTypes(files []astparser.FileContext) (added, modified, deleted int) {
 	for _, file := range files {
 		switch file.ChangeType {
 		case astparser.ChangeTypeAdded:
@@ -787,7 +773,7 @@ func (cbb *ContextBundleBuilder) countChangeTypes(files []astparser.FileContext)
 }
 
 // extractPackageFromPath extracts package name from file path
-func (cbb *ContextBundleBuilder) extractPackageFromPath(filePath string) string {
+func (cbb *Builder) extractPackageFromPath(filePath string) string {
 	dir := filepath.Dir(filePath)
 	if dir == "." {
 		return "main"

@@ -14,6 +14,10 @@ type CodeProvider interface {
 	ParseWebhookEvent(payload []byte) (*model.CodeEvent, error)
 	IsMergeRequestEvent(event *model.CodeEvent) bool
 
+	// Repository operations
+	GetRepositoryInfo(ctx context.Context, projectID string) (*model.RepositoryInfo, error)
+	GetRepositorySnapshot(ctx context.Context, projectID, commitSHA string) (*model.RepositorySnapshot, error)
+
 	// MR/PR operations
 	GetMergeRequest(ctx context.Context, projectID string, mrIID int) (*model.MergeRequest, error)
 	GetMergeRequestDiffs(ctx context.Context, projectID string, mrIID int) ([]*model.FileDiff, error)

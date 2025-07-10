@@ -7,14 +7,15 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/logze/v2"
 	sitter "github.com/smacker/go-tree-sitter"
 )
 
-// SymbolAnalyzer analyzes symbols and their relationships across the codebase
-type SymbolAnalyzer struct {
+// ExternalRefsAnalyzer analyzes symbols and their relationships across the codebase
+type ExternalRefsAnalyzer struct {
 	astParser *Parser
 	provider  interfaces.CodeProvider
 	log       logze.Logger
@@ -25,18 +26,17 @@ type CallerInfo struct {
 	FilePath     string `json:"file_path"`
 	LineNumber   int    `json:"line_number"`
 	FunctionName string `json:"function_name"`
-	Context      string `json:"context"`
+	Code         string `json:"code"`
 	CodeSnippet  string `json:"code_snippet"`
-	CallType     string `json:"call_type"` // "direct", "method", "indirect"
 }
 
 // DependencyInfo represents information about a dependency of a symbol
 type DependencyInfo struct {
 	SymbolName      string `json:"symbol_name"`
-	Source          string `json:"source"`           // "internal", "external", "standard_library"
-	FilePath        string `json:"file_path"`        // For internal dependencies
-	Documentation   string `json:"documentation"`    // For external/stdlib dependencies
-	ImportStatement string `json:"import_statement"` // How it's imported
+	SourceFile      string `json:"source_file"`
+	ImportStatement string `json:"import_statement,omitempty"`
+	Documentation   string `json:"documentation,omitempty"`
+	Code            string `json:"code"`
 }
 
 // SymbolUsageContext provides comprehensive context about symbol usage
@@ -49,20 +49,20 @@ type SymbolUsageContext struct {
 }
 
 // NewSymbolAnalyzer creates a new symbol analyzer
-func NewSymbolAnalyzer(provider interfaces.CodeProvider) *SymbolAnalyzer {
-	return &SymbolAnalyzer{
+func NewExternalRefsAnalyzer(provider interfaces.CodeProvider) *ExternalRefsAnalyzer {
+	return &ExternalRefsAnalyzer{
 		astParser: NewParser(),
 		provider:  provider,
-		log:       logze.With("component", "symbol_analyzer"),
+		log:       logze.With("component", "external_refs_analyzer"),
 	}
 }
 
 // AnalyzeSymbolUsage analyzes the usage context of an affected symbol
-func (sa *SymbolAnalyzer) AnalyzeSymbolUsage(ctx context.Context, projectID, commitSHA string, symbol AffectedSymbol) (SymbolUsageContext, error) {
+func (sa *ExternalRefsAnalyzer) AnalyzeSymbolUsage(ctx context.Context, data *model.RepositorySnapshot, symbol AffectedSymbol) (SymbolUsageContext, error) {
 	usage := SymbolUsageContext{}
 
 	// Find callers of this symbol
-	callers, err := sa.findSymbolCallers(ctx, projectID, commitSHA, symbol)
+	callers, err := sa.FindSymbolCallers(ctx, data, symbol)
 	if err != nil {
 		sa.log.Warn("failed to find symbol callers", "error", err, "symbol", symbol.Name)
 	} else {
@@ -70,15 +70,15 @@ func (sa *SymbolAnalyzer) AnalyzeSymbolUsage(ctx context.Context, projectID, com
 	}
 
 	// Analyze dependencies of this symbol
-	dependencies, err := sa.analyzeDependencies(ctx, projectID, commitSHA, symbol)
+	dependencies, err := sa.AnalyzeDependencies(ctx, data, symbol)
 	if err != nil {
 		sa.log.Warn("failed to analyze dependencies", "error", err, "symbol", symbol.Name)
 	} else {
 		usage.Dependencies = dependencies
 	}
 
-	// Find related files (files that import or use this symbol's file)
-	relatedFiles, err := sa.findRelatedFiles(ctx, projectID, commitSHA, symbol.FilePath)
+	// Find related files (files in the same directory)
+	relatedFiles, err := sa.findRelatedFiles(ctx, data, symbol.FilePath)
 	if err != nil {
 		sa.log.Warn("failed to find related files", "error", err, "symbol", symbol.Name)
 	} else {
@@ -89,131 +89,56 @@ func (sa *SymbolAnalyzer) AnalyzeSymbolUsage(ctx context.Context, projectID, com
 }
 
 // findSymbolCallers finds all places where a symbol is called/used
-func (sa *SymbolAnalyzer) findSymbolCallers(ctx context.Context, projectID, commitSHA string, symbol AffectedSymbol) ([]CallerInfo, error) {
+func (sa *ExternalRefsAnalyzer) FindSymbolCallers(ctx context.Context, data *model.RepositorySnapshot, symbol AffectedSymbol) ([]CallerInfo, error) {
 	var callers []CallerInfo
 
-	// First, try to use text-based search to find potential callers
-	// This is faster than parsing every file
-	potentialFiles, err := sa.findFilesContainingSymbol(ctx, projectID, commitSHA, symbol.Name)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to find files containing symbol")
+	if symbol.Name == "" {
+		return callers, nil
 	}
 
 	// Analyze each potential file with AST parsing for accurate results
-	for _, filePath := range potentialFiles {
-		if filePath == symbol.FilePath {
-			continue // Skip the file where symbol is defined
-		}
-
-		fileCallers, err := sa.analyzeFileForCallers(ctx, projectID, commitSHA, filePath, symbol)
+	for _, file := range getAffectedFiles(data, symbol) {
+		fileCallers, err := sa.analyzeFileForCallers(ctx, file.Content, file.Path, symbol)
 		if err != nil {
-			sa.log.Warn("failed to analyze file for callers", "error", err, "file", filePath)
+			sa.log.Warn("failed to analyze file for callers", "error", err, "file", file.Path)
 			continue
 		}
-
 		callers = append(callers, fileCallers...)
 	}
 
 	return callers, nil
 }
 
-// findFilesContainingSymbol uses text search to find files that might contain the symbol
-func (sa *SymbolAnalyzer) findFilesContainingSymbol(ctx context.Context, projectID, commitSHA, symbolName string) ([]string, error) {
-	// This is a simplified implementation
-	// In a real implementation, you might want to:
-	// 1. Use grep or ripgrep for fast text search
-	// 2. Get a list of all files in the repository
-	// 3. Search through them for the symbol name
-
-	// For now, we'll return an empty slice and let the calling code handle it
-	// In a real implementation, you would integrate with your git provider
-	// to get file contents and search through them
-
-	return []string{}, nil
+func getAffectedFiles(data *model.RepositorySnapshot, symbol AffectedSymbol) []*model.RepositoryFile {
+	var files []*model.RepositoryFile
+	for _, file := range data.Files {
+		if strings.Contains(file.Content, symbol.Name) {
+			files = append(files, file)
+		}
+	}
+	return files
 }
 
 // analyzeFileForCallers analyzes a specific file to find callers of a symbol
-func (sa *SymbolAnalyzer) analyzeFileForCallers(ctx context.Context, projectID, commitSHA, filePath string, symbol AffectedSymbol) ([]CallerInfo, error) {
-	// Get file content
-	content, err := sa.provider.GetFileContent(ctx, projectID, filePath, commitSHA)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to get file content")
+func (sa *ExternalRefsAnalyzer) analyzeFileForCallers(ctx context.Context, content string, filePath string, symbol AffectedSymbol) ([]CallerInfo, error) {
+	if symbol.Name == "" {
+		return nil, nil
 	}
 
-	// Parse file to AST
+	// TODO: cache
 	rootNode, err := sa.astParser.ParseFileToAST(ctx, filePath, content)
 	if err != nil {
-		// If AST parsing fails, fall back to text search
-		return sa.findCallersWithTextSearch(content, filePath, symbol), nil
+		return nil, errm.Wrap(err, "failed to parse file to AST")
 	}
 
-	// Find function calls in the AST
 	var callers []CallerInfo
 	sa.walkASTForCallers(rootNode, content, filePath, symbol, &callers)
 
 	return callers, nil
 }
 
-// findCallersWithTextSearch finds callers using simple text matching (fallback)
-func (sa *SymbolAnalyzer) findCallersWithTextSearch(content, filePath string, symbol AffectedSymbol) []CallerInfo {
-	var callers []CallerInfo
-	lines := strings.Split(content, "\n")
-
-	// Create regex patterns for different call types
-	patterns := sa.createCallPatterns(symbol)
-
-	for lineNum, line := range lines {
-		for _, pattern := range patterns {
-			if matches := pattern.regex.FindAllStringSubmatch(line, -1); len(matches) > 0 {
-				caller := CallerInfo{
-					FilePath:    filePath,
-					LineNumber:  lineNum + 1, // Convert to 1-based
-					Context:     strings.TrimSpace(line),
-					CodeSnippet: sa.extractCodeSnippet(lines, lineNum, 2),
-					CallType:    pattern.callType,
-				}
-
-				// Try to determine the function this call is in
-				caller.FunctionName = sa.findContainingFunction(lines, lineNum)
-
-				callers = append(callers, caller)
-			}
-		}
-	}
-
-	return callers
-}
-
-// callPattern represents a regex pattern for finding function calls
-type callPattern struct {
-	regex    *regexp.Regexp
-	callType string
-}
-
-// createCallPatterns creates regex patterns to find different types of calls to a symbol
-func (sa *SymbolAnalyzer) createCallPatterns(symbol AffectedSymbol) []callPattern {
-	symbolName := regexp.QuoteMeta(symbol.Name)
-
-	patterns := []callPattern{
-		{
-			regex:    regexp.MustCompile(fmt.Sprintf(`\b%s\s*\(`, symbolName)),
-			callType: "direct",
-		},
-		{
-			regex:    regexp.MustCompile(fmt.Sprintf(`\.%s\s*\(`, symbolName)),
-			callType: "method",
-		},
-		{
-			regex:    regexp.MustCompile(fmt.Sprintf(`\b%s\b`, symbolName)),
-			callType: "reference",
-		},
-	}
-
-	return patterns
-}
-
 // extractCodeSnippet extracts a code snippet around a specific line
-func (sa *SymbolAnalyzer) extractCodeSnippet(lines []string, centerLine, contextLines int) string {
+func (sa *ExternalRefsAnalyzer) extractCodeSnippet(lines []string, centerLine, contextLines int) string {
 	start := centerLine - contextLines
 	if start < 0 {
 		start = 0
@@ -228,49 +153,17 @@ func (sa *SymbolAnalyzer) extractCodeSnippet(lines []string, centerLine, context
 	return strings.TrimSpace(snippet)
 }
 
-// findContainingFunction finds the function that contains a specific line
-func (sa *SymbolAnalyzer) findContainingFunction(lines []string, targetLine int) string {
-	// Look backwards from the target line to find a function declaration
-	for i := targetLine; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-
-		// Simple patterns for function declarations
-		funcPatterns := []*regexp.Regexp{
-			regexp.MustCompile(`^func\s+(\w+)`),           // Go
-			regexp.MustCompile(`^function\s+(\w+)`),       // JavaScript
-			regexp.MustCompile(`^def\s+(\w+)`),            // Python
-			regexp.MustCompile(`^(\w+)\s*\([^)]*\)\s*\{`), // C-style
-			regexp.MustCompile(`^(\w+):\s*function`),      // JavaScript object method
-		}
-
-		for _, pattern := range funcPatterns {
-			if matches := pattern.FindStringSubmatch(line); len(matches) > 1 {
-				return matches[1]
-			}
-		}
-
-		// Don't look too far back
-		if targetLine-i > 50 {
-			break
-		}
-	}
-
-	return "unknown"
-}
-
 // walkASTForCallers walks the AST to find function calls
-func (sa *SymbolAnalyzer) walkASTForCallers(node *sitter.Node, content, filePath string, symbol AffectedSymbol, callers *[]CallerInfo) {
+func (sa *ExternalRefsAnalyzer) walkASTForCallers(node *sitter.Node, content, filePath string, symbol AffectedSymbol, callers *[]CallerInfo) {
 	nodeType := node.Type()
 
-	// Check if this node is a function call that matches our symbol
 	if strings.Contains(nodeType, "call") {
 		call := sa.astParser.extractDependency(node, content)
-		if sa.isCallToSymbol(call, symbol) {
+		if call.Name == symbol.Name || strings.HasSuffix(call.Name, "."+symbol.Name) {
 			caller := CallerInfo{
 				FilePath:    filePath,
 				LineNumber:  call.Line,
-				Context:     sa.astParser.getNodeText(node, content),
-				CallType:    "direct",
+				Code:        sa.astParser.getNodeText(node, content),
 				CodeSnippet: sa.getCallSiteSnippet(node, content),
 			}
 
@@ -294,14 +187,8 @@ func (sa *SymbolAnalyzer) walkASTForCallers(node *sitter.Node, content, filePath
 	}
 }
 
-// isCallToSymbol checks if a function call is calling our target symbol
-func (sa *SymbolAnalyzer) isCallToSymbol(call Dependency, symbol AffectedSymbol) bool {
-	// Simple name matching - could be enhanced with more sophisticated logic
-	return call.Name == symbol.Name || strings.HasSuffix(call.Name, "."+symbol.Name)
-}
-
 // getCallSiteSnippet gets a code snippet around a function call site
-func (sa *SymbolAnalyzer) getCallSiteSnippet(node *sitter.Node, content string) string {
+func (sa *ExternalRefsAnalyzer) getCallSiteSnippet(node *sitter.Node, content string) string {
 	// Get the line of the call
 	line := int(node.StartPoint().Row)
 	lines := strings.Split(content, "\n")
@@ -310,7 +197,7 @@ func (sa *SymbolAnalyzer) getCallSiteSnippet(node *sitter.Node, content string) 
 }
 
 // findContainingFunctionNode finds the name of the function containing a node
-func (sa *SymbolAnalyzer) findContainingFunctionNode(node *sitter.Node, content string) string {
+func (sa *ExternalRefsAnalyzer) findContainingFunctionNode(node *sitter.Node, content string) string {
 	current := node.Parent()
 
 	for current != nil {
@@ -323,40 +210,190 @@ func (sa *SymbolAnalyzer) findContainingFunctionNode(node *sitter.Node, content 
 	return "unknown"
 }
 
-// analyzeDependencies analyzes the dependencies of a symbol
-func (sa *SymbolAnalyzer) analyzeDependencies(ctx context.Context, projectID, commitSHA string, symbol AffectedSymbol) ([]DependencyInfo, error) {
+// AnalyzeDependencies analyzes the dependencies of a symbol by finding their definitions in the codebase
+func (sa *ExternalRefsAnalyzer) AnalyzeDependencies(ctx context.Context, data *model.RepositorySnapshot, symbol AffectedSymbol) ([]DependencyInfo, error) {
 	var dependencies []DependencyInfo
 
-	// Analyze the function calls within the symbol
-	for _, call := range symbol.Dependencies {
-		dep := DependencyInfo{
-			SymbolName: call.Name,
+	// For each dependency of the symbol, find its definition in the codebase
+	for _, dep := range symbol.Dependencies {
+		depInfo := DependencyInfo{
+			SymbolName: dep.Name,
 		}
 
-		// Determine if it's internal, external, or standard library
-		if sa.isStandardLibraryCall(call.Name) {
-			dep.Source = "standard_library"
-			dep.Documentation = sa.getStandardLibraryDoc(call.Name)
-		} else if sa.isExternalLibraryCall(call.Name) {
-			dep.Source = "external"
-			dep.Documentation = sa.getExternalLibraryDoc(call.Name)
-		} else {
-			dep.Source = "internal"
-			// Try to find the file where this symbol is defined
-			definitionFile, err := sa.findSymbolDefinition(ctx, projectID, commitSHA, call.Name)
-			if err == nil {
-				dep.FilePath = definitionFile
-			}
+		// Find the definition of this dependency in the codebase
+		definition, found := sa.findSymbolDefinitionInSnapshot(ctx, data, dep.Name)
+		if found {
+			depInfo.SourceFile = definition.FilePath
+			depInfo.Code = definition.Code
+			depInfo.Documentation = definition.Documentation
 		}
 
-		dependencies = append(dependencies, dep)
+		dependencies = append(dependencies, depInfo)
 	}
 
 	return dependencies, nil
 }
 
+// SymbolDefinition represents a symbol definition found in the codebase
+type SymbolDefinition struct {
+	FilePath      string
+	LineNumber    int
+	Code          string
+	Documentation string
+}
+
+// findSymbolDefinitionInSnapshot finds the definition of a symbol within the repository snapshot
+func (sa *ExternalRefsAnalyzer) findSymbolDefinitionInSnapshot(ctx context.Context, data *model.RepositorySnapshot, symbolName string) (SymbolDefinition, bool) {
+	if symbolName == "" {
+		return SymbolDefinition{}, false
+	}
+
+	// Search through all files in the snapshot
+	for _, file := range data.Files {
+		if file.IsBinary {
+			continue // Skip binary files
+		}
+
+		// Try AST parsing first for more accurate results
+		definition, found := sa.findDefinitionInFileWithAST(ctx, file, symbolName)
+		if found {
+			return definition, true
+		}
+
+		// Fallback to text search if AST parsing fails
+		definition, found = sa.findDefinitionWithTextSearch(file, symbolName)
+		if found {
+			return definition, true
+		}
+	}
+
+	return SymbolDefinition{}, false
+}
+
+// findDefinitionInFileWithAST finds symbol definition using AST parsing
+func (sa *ExternalRefsAnalyzer) findDefinitionInFileWithAST(ctx context.Context, file *model.RepositoryFile, symbolName string) (SymbolDefinition, bool) {
+	rootNode, err := sa.astParser.ParseFileToAST(ctx, file.Path, file.Content)
+	if err != nil {
+		return SymbolDefinition{}, false
+	}
+
+	var definition SymbolDefinition
+	found := sa.walkASTForDefinition(rootNode, file.Content, file.Path, symbolName, &definition)
+
+	return definition, found
+}
+
+// walkASTForDefinition walks the AST to find symbol definitions
+func (sa *ExternalRefsAnalyzer) walkASTForDefinition(node *sitter.Node, content, filePath, symbolName string, definition *SymbolDefinition) bool {
+	nodeType := node.Type()
+
+	// Check for function definitions, variable declarations, etc.
+	if sa.astParser.IsSymbolNode(nodeType) {
+		extractedName := sa.astParser.extractSymbolName(node, content)
+		if extractedName == symbolName {
+			*definition = SymbolDefinition{
+				FilePath:      filePath,
+				LineNumber:    int(node.StartPoint().Row) + 1,
+				Code:          sa.astParser.getNodeText(node, content),
+				Documentation: sa.extractDocumentation(node, content),
+			}
+			return true
+		}
+	}
+
+	// Recursively check children
+	childCount := int(node.ChildCount())
+	for i := 0; i < childCount; i++ {
+		child := node.Child(i)
+		if child != nil {
+			if sa.walkASTForDefinition(child, content, filePath, symbolName, definition) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// findDefinitionWithTextSearch finds symbol definition using text patterns (fallback)
+func (sa *ExternalRefsAnalyzer) findDefinitionWithTextSearch(file *model.RepositoryFile, symbolName string) (SymbolDefinition, bool) {
+	lines := strings.Split(file.Content, "\n")
+
+	// Common definition patterns
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(fmt.Sprintf(`^func\s+%s\s*\(`, regexp.QuoteMeta(symbolName))),     // Go function
+		regexp.MustCompile(fmt.Sprintf(`^function\s+%s\s*\(`, regexp.QuoteMeta(symbolName))), // JavaScript function
+		regexp.MustCompile(fmt.Sprintf(`^def\s+%s\s*\(`, regexp.QuoteMeta(symbolName))),      // Python function
+		regexp.MustCompile(fmt.Sprintf(`^class\s+%s\b`, regexp.QuoteMeta(symbolName))),       // Class definition
+		regexp.MustCompile(fmt.Sprintf(`^type\s+%s\s`, regexp.QuoteMeta(symbolName))),        // Go type definition
+		regexp.MustCompile(fmt.Sprintf(`^const\s+%s\s*=`, regexp.QuoteMeta(symbolName))),     // Constant definition
+		regexp.MustCompile(fmt.Sprintf(`^var\s+%s\s`, regexp.QuoteMeta(symbolName))),         // Variable definition
+		regexp.MustCompile(fmt.Sprintf(`^%s\s*:=`, regexp.QuoteMeta(symbolName))),            // Go short variable declaration
+		regexp.MustCompile(fmt.Sprintf(`^%s\s*=`, regexp.QuoteMeta(symbolName))),             // Assignment
+	}
+
+	for lineNum, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		for _, pattern := range patterns {
+			if pattern.MatchString(trimmedLine) {
+				definition := SymbolDefinition{
+					FilePath:      file.Path,
+					LineNumber:    lineNum + 1,
+					Code:          trimmedLine,
+					Documentation: sa.extractDocumentationFromLines(lines, lineNum),
+				}
+				return definition, true
+			}
+		}
+	}
+
+	return SymbolDefinition{}, false
+}
+
+// extractDocumentation extracts documentation comments for a symbol
+func (sa *ExternalRefsAnalyzer) extractDocumentation(node *sitter.Node, content string) string {
+	// Look for comments immediately before the symbol
+	lines := strings.Split(content, "\n")
+	symbolLine := int(node.StartPoint().Row)
+
+	return sa.extractDocumentationFromLines(lines, symbolLine)
+}
+
+// extractDocumentationFromLines extracts documentation from lines around a symbol
+func (sa *ExternalRefsAnalyzer) extractDocumentationFromLines(lines []string, symbolLine int) string {
+	var docLines []string
+
+	// Look backwards for comment lines
+	for i := symbolLine - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue // Skip empty lines
+		}
+
+		// Check for different comment styles
+		if strings.HasPrefix(line, "//") || strings.HasPrefix(line, "#") ||
+			strings.HasPrefix(line, "/*") || strings.HasPrefix(line, "\"\"\"") ||
+			strings.HasPrefix(line, "'''") {
+			docLines = append([]string{line}, docLines...) // Prepend to maintain order
+		} else {
+			break // Stop at first non-comment line
+		}
+
+		// Don't look too far back
+		if symbolLine-i > 10 {
+			break
+		}
+	}
+
+	if len(docLines) > 0 {
+		return strings.Join(docLines, "\n")
+	}
+
+	return ""
+}
+
 // isStandardLibraryCall checks if a function call is to a standard library
-func (sa *SymbolAnalyzer) isStandardLibraryCall(callName string) bool {
+func (sa *ExternalRefsAnalyzer) isStandardLibraryCall(callName string) bool {
 	// Go standard library patterns
 	stdLibPatterns := []string{
 		"fmt.", "os.", "io.", "net.", "http.", "json.", "time.", "strings.", "strconv.",
@@ -387,7 +424,7 @@ func (sa *SymbolAnalyzer) isStandardLibraryCall(callName string) bool {
 }
 
 // isExternalLibraryCall checks if a function call is to an external library
-func (sa *SymbolAnalyzer) isExternalLibraryCall(callName string) bool {
+func (sa *ExternalRefsAnalyzer) isExternalLibraryCall(callName string) bool {
 	// This is a heuristic - in a real implementation, you might:
 	// 1. Parse import statements
 	// 2. Check against a list of known external libraries
@@ -398,7 +435,7 @@ func (sa *SymbolAnalyzer) isExternalLibraryCall(callName string) bool {
 }
 
 // getStandardLibraryDoc gets documentation for standard library functions
-func (sa *SymbolAnalyzer) getStandardLibraryDoc(callName string) string {
+func (sa *ExternalRefsAnalyzer) getStandardLibraryDoc(callName string) string {
 	// This would ideally fetch from language documentation
 	// For now, return a simple description
 	if strings.HasPrefix(callName, "fmt.") {
@@ -412,14 +449,14 @@ func (sa *SymbolAnalyzer) getStandardLibraryDoc(callName string) string {
 }
 
 // getExternalLibraryDoc gets documentation for external library functions
-func (sa *SymbolAnalyzer) getExternalLibraryDoc(callName string) string {
+func (sa *ExternalRefsAnalyzer) getExternalLibraryDoc(callName string) string {
 	// This would ideally integrate with package documentation APIs
 	// For now, return a generic description
 	return "External library function"
 }
 
 // findSymbolDefinition finds the file where a symbol is defined
-func (sa *SymbolAnalyzer) findSymbolDefinition(ctx context.Context, projectID, commitSHA, symbolName string) (string, error) {
+func (sa *ExternalRefsAnalyzer) findSymbolDefinition(ctx context.Context, projectID, commitSHA, symbolName string) (string, error) {
 	// This is a simplified implementation
 	// In a real implementation, you would:
 	// 1. Search through project files for symbol definitions
@@ -429,64 +466,58 @@ func (sa *SymbolAnalyzer) findSymbolDefinition(ctx context.Context, projectID, c
 	return "", errm.New("symbol definition search not implemented")
 }
 
-// findRelatedFiles finds files that are related to the given file
-func (sa *SymbolAnalyzer) findRelatedFiles(ctx context.Context, projectID, commitSHA, filePath string) ([]string, error) {
-	// This would find:
-	// 1. Files that import this file
-	// 2. Files that this file imports
-	// 3. Files in the same package/module
-	// 4. Test files for this file
-
+// findRelatedFiles finds files that are related to the given file (files in the same directory)
+func (sa *ExternalRefsAnalyzer) findRelatedFiles(ctx context.Context, data *model.RepositorySnapshot, filePath string) ([]string, error) {
 	var relatedFiles []string
 
-	// Add test files (simple heuristic)
-	if testFile := sa.findTestFile(filePath); testFile != "" {
-		relatedFiles = append(relatedFiles, testFile)
-	}
+	// Get the directory of the target file
+	targetDir := filepath.Dir(filePath)
 
-	// Add files in the same directory (package for Go)
-	dirFiles := sa.findFilesInSameDirectory(filePath)
-	relatedFiles = append(relatedFiles, dirFiles...)
+	// Find all files in the same directory
+	for _, file := range data.Files {
+		fileDir := filepath.Dir(file.Path)
+
+		// Skip the file itself and files in different directories
+		if file.Path == filePath || fileDir != targetDir {
+			continue
+		}
+
+		// Skip binary files and common non-source files
+		if file.IsBinary || sa.shouldSkipFile(file.Path) {
+			continue
+		}
+
+		relatedFiles = append(relatedFiles, file.Path)
+	}
 
 	return relatedFiles, nil
 }
 
-// findTestFile finds the corresponding test file for a source file
-func (sa *SymbolAnalyzer) findTestFile(filePath string) string {
-	ext := filepath.Ext(filePath)
-	base := strings.TrimSuffix(filePath, ext)
-
-	// Go test files
-	if ext == ".go" {
-		return base + "_test.go"
+// shouldSkipFile determines if a file should be skipped when finding related files
+func (sa *ExternalRefsAnalyzer) shouldSkipFile(filePath string) bool {
+	skipPatterns := []string{
+		".git/", ".svn/", ".hg/",
+		"node_modules/", "vendor/", "__pycache__/",
+		".pyc", ".pyo", ".class", ".o", ".so", ".dylib", ".dll",
+		".exe", ".bin", ".tar", ".gz", ".zip", ".rar",
+		".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg",
+		".pdf", ".doc", ".docx", ".xls", ".xlsx",
 	}
 
-	// Python test files
-	if ext == ".py" {
-		dir := filepath.Dir(filePath)
-		filename := filepath.Base(base)
-		return filepath.Join(dir, "test_"+filename+ext)
+	lowerPath := strings.ToLower(filePath)
+	for _, pattern := range skipPatterns {
+		if strings.Contains(lowerPath, pattern) {
+			return true
+		}
 	}
 
-	// JavaScript test files
-	if ext == ".js" {
-		return base + ".test.js"
-	}
-
-	return ""
-}
-
-// findFilesInSameDirectory finds other source files in the same directory
-func (sa *SymbolAnalyzer) findFilesInSameDirectory(filePath string) []string {
-	// This is a simplified implementation
-	// In a real implementation, you would list directory contents
-	return []string{}
+	return false
 }
 
 // Enhanced context gathering for configuration files
 
 // AnalyzeConfigFileChanges analyzes changes in configuration files
-func (sa *SymbolAnalyzer) AnalyzeConfigFileChanges(ctx context.Context, projectID, commitSHA string, configFilePath string, changes []string) ([]DependencyInfo, error) {
+func (sa *ExternalRefsAnalyzer) AnalyzeConfigFileChanges(ctx context.Context, projectID, commitSHA string, configFilePath string, changes []string) ([]DependencyInfo, error) {
 	var dependencies []DependencyInfo
 
 	// Find files that read this configuration
@@ -498,8 +529,7 @@ func (sa *SymbolAnalyzer) AnalyzeConfigFileChanges(ctx context.Context, projectI
 	for _, consumer := range consumers {
 		dep := DependencyInfo{
 			SymbolName:    "config_reader",
-			Source:        "internal",
-			FilePath:      consumer,
+			SourceFile:    consumer,
 			Documentation: fmt.Sprintf("Code that reads configuration from %s", configFilePath),
 		}
 		dependencies = append(dependencies, dep)
@@ -509,7 +539,7 @@ func (sa *SymbolAnalyzer) AnalyzeConfigFileChanges(ctx context.Context, projectI
 }
 
 // findConfigFileConsumers finds code that reads a configuration file
-func (sa *SymbolAnalyzer) findConfigFileConsumers(ctx context.Context, projectID, commitSHA, configFilePath string) ([]string, error) {
+func (sa *ExternalRefsAnalyzer) findConfigFileConsumers(ctx context.Context, projectID, commitSHA, configFilePath string) ([]string, error) {
 	// This would search for:
 	// 1. File path references in code
 	// 2. Configuration loading patterns

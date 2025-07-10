@@ -20,6 +20,48 @@ type User struct {
 	Email    string
 }
 
+// RepositoryInfo represents repository metadata and statistics
+type RepositoryInfo struct {
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	FullName      string         `json:"full_name"`
+	Description   string         `json:"description"`
+	URL           string         `json:"url"`
+	DefaultBranch string         `json:"default_branch"`
+	Size          int64          `json:"size"` // Repository size in KB
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	Branches      []BranchInfo   `json:"branches"`
+	Languages     map[string]int `json:"languages"` // Language -> lines of code
+}
+
+// BranchInfo represents information about a repository branch
+type BranchInfo struct {
+	Name      string    `json:"name"`
+	SHA       string    `json:"sha"` // Last commit SHA
+	Protected bool      `json:"protected"`
+	Default   bool      `json:"default"`
+	UpdatedAt time.Time `json:"updated_at"` // Last commit time
+}
+
+// RepositorySnapshot represents a complete snapshot of repository files at a specific commit
+type RepositorySnapshot struct {
+	CommitSHA string            `json:"commit_sha"`
+	Timestamp time.Time         `json:"timestamp"`
+	Files     []*RepositoryFile `json:"files"`
+	TotalSize int64             `json:"total_size"` // Total size in bytes
+}
+
+// RepositoryFile represents a single file in the repository snapshot
+type RepositoryFile struct {
+	Path        string `json:"path"`
+	Content     string `json:"content"`
+	Size        int64  `json:"size"` // File size in bytes
+	Mode        string `json:"mode"` // File mode (e.g., "100644")
+	IsBinary    bool   `json:"is_binary"`
+	ContentType string `json:"content_type"`
+}
+
 // MergeRequest represents a merge/pull request across different providers
 type MergeRequest struct {
 	ID           string

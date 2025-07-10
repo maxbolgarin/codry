@@ -240,27 +240,27 @@ func (sch *SpecialCasesHandler) findBrokenReferences(ctx context.Context, reques
 	var brokenRefs []BrokenReference
 
 	// This would search the codebase for references to the deleted symbols
-	// Implementation would depend on having a search mechanism
+	// // Implementation would depend on having a search mechanism
 
-	for _, symbol := range deletedSymbols {
-		// Search for usages of this symbol (simplified)
-		usages, err := sch.symbolAnalyzer.AnalyzeSymbolUsage(ctx, request.ProjectID, request.MergeRequest.SHA, symbol)
-		if err != nil {
-			continue
-		}
+	// for _, symbol := range deletedSymbols {
+	// 	// Search for usages of this symbol (simplified)
+	// 	usages, err := sch.symbolAnalyzer.FindSymbolCallers(ctx, request.RepoDataHead, symbol)
+	// 	if err != nil {
+	// 		continue
+	// 	}
 
-		// Convert callers to broken references
-		for _, caller := range usages.Callers {
-			brokenRef := BrokenReference{
-				FilePath:         caller.FilePath,
-				LineNumber:       caller.LineNumber,
-				ReferencedSymbol: symbol.Name,
-				Context:          caller.CodeSnippet,
-				Severity:         "error",
-			}
-			brokenRefs = append(brokenRefs, brokenRef)
-		}
-	}
+	// 	// Convert callers to broken references
+	// 	for _, caller := range usages.Callers {
+	// 		brokenRef := BrokenReference{
+	// 			FilePath:         caller.FilePath,
+	// 			LineNumber:       caller.LineNumber,
+	// 			ReferencedSymbol: symbol.Name,
+	// 			Context:          caller.CodeSnippet,
+	// 			Severity:         "error",
+	// 		}
+	// 		brokenRefs = append(brokenRefs, brokenRef)
+	// 	}
+	// }
 
 	return brokenRefs, nil
 }

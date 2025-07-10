@@ -41,7 +41,7 @@ func (s *Reviewer) ReviewMergeRequest(ctx context.Context, projectID string, mer
 
 	// Step 1: Gather comprehensive MR context before any generation
 	s.logFlow("gathering comprehensive MR context", "mr_iid", mergeRequest.IID)
-	mrContext, err := s.contextManager.GatherMRContext(ctx, projectID, mergeRequest)
+	mrContext, err := s.contextBuilder.BuildContext(ctx, projectID, mergeRequest.IID)
 	if err != nil {
 		return errm.Wrap(err, "failed to gather MR context")
 	}
@@ -57,18 +57,7 @@ func (s *Reviewer) ReviewMergeRequest(ctx context.Context, projectID string, mer
 	// 	"total_deletions", mrContext.TotalDeletions,
 	// )
 
-	// fmt.Println(mrContext.BuildContextSummary())
-
-	rew, err := s.cbb.BuildContextBundle(ctx, model.ReviewRequest{
-		ProjectID:    projectID,
-		MergeRequest: mergeRequest,
-		Changes:      mrContext.FileDiffs,
-	}, mrContext.FileDiffs)
-	if err != nil {
-		return errm.Wrap(err, "failed to build context bundle")
-	}
-
-	res, err := json.MarshalIndent(rew, "", "  ")
+	res, err := json.MarshalIndent(mrContext, "", "  ")
 	if err != nil {
 		return errm.Wrap(err, "failed to marshal context bundle")
 	}
@@ -82,8 +71,8 @@ func (s *Reviewer) ReviewMergeRequest(ctx context.Context, projectID string, mer
 	s.processMergeRequestReview(ctx, model.ReviewRequest{
 		ProjectID:    projectID,
 		MergeRequest: mergeRequest,
-		Changes:      mrContext.FileDiffs,
-	}, mrContext)
+		Changes:      mrContext.MRContext.FileDiffs,
+	})
 
 	// Mark MR as reviewed in single review mode
 	if s.cfg.SingleReviewMode {
@@ -157,7 +146,7 @@ func (s *Reviewer) markMRAsReviewed(projectID string, mr *model.MergeRequest) {
 }
 
 // ProcessMergeRequest processes a merge request for the first time
-func (s *Reviewer) processMergeRequestReview(ctx context.Context, request model.ReviewRequest, mrContext *MRContext) {
+func (s *Reviewer) processMergeRequestReview(ctx context.Context, request model.ReviewRequest) {
 	log := s.log.WithFields(
 		"project_id", request.ProjectID,
 		"mr_iid", request.MergeRequest.IID,
@@ -168,10 +157,9 @@ func (s *Reviewer) processMergeRequestReview(ctx context.Context, request model.
 	log.Infof("starting merge request review: '%s'", request.MergeRequest.Title)
 
 	reviewBundle := &reviewBundle{
-		result:    &model.ReviewResult{},
-		request:   request,
-		mrContext: mrContext,
-		timer:     abstract.StartTimer(),
+		result:  &model.ReviewResult{},
+		request: request,
+		timer:   abstract.StartTimer(),
 	}
 
 	defer func() {
@@ -200,7 +188,6 @@ func (s *Reviewer) processMergeRequestReview(ctx context.Context, request model.
 type reviewBundle struct {
 	result         *model.ReviewResult
 	request        model.ReviewRequest
-	mrContext      *MRContext
 	filesToReview  []*model.FileDiff
 	fullDiffString string
 	log            logze.Logger
