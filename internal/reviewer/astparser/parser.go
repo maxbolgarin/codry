@@ -204,7 +204,7 @@ func (p *Parser) ExtractSymbolFromNode(node *sitter.Node, filePath, fileContent 
 		FilePath:  filePath,
 		StartLine: int(node.StartPoint().Row) + 1, // Convert to 1-based
 		EndLine:   int(node.EndPoint().Row) + 1,   // Convert to 1-based
-		Name:      p.extractSymbolName(node, fileContent),
+		Name:      p.extractSymbolName(node, fileContent, filePath),
 		Type:      getSymbolType(node.Type()),
 	}
 	symbol.DocComment = p.extractDocComment(node, fileContent, symbol.StartLine)
@@ -221,8 +221,10 @@ func (p *Parser) ExtractSymbolFromNode(node *sitter.Node, filePath, fileContent 
 }
 
 // extractSymbolName extracts the symbol name from a symbol declaration node
-func (p *Parser) extractSymbolName(node *sitter.Node, content string) string {
+func (p *Parser) extractSymbolName(node *sitter.Node, content string, filePath string) string {
 	childCount := int(node.ChildCount())
+	
+	// First, try to find a direct identifier child
 	for i := 0; i < childCount; i++ {
 		child := node.Child(i)
 		if child == nil {
@@ -230,10 +232,204 @@ func (p *Parser) extractSymbolName(node *sitter.Node, content string) string {
 		}
 
 		childType := child.Type()
-		if strings.Contains(childType, "identifier") {
-			return p.getNodeText(child, content)
+		if strings.Contains(childType, "identifier") || 
+		   strings.Contains(childType, "name") ||
+		   strings.Contains(childType, "variable_name") ||
+		   strings.Contains(childType, "function_name") ||
+		   strings.Contains(childType, "class_name") ||
+		   strings.Contains(childType, "method_name") {
+			name := p.getNodeText(child, content)
+			if name != "" {
+				return name
+			}
 		}
 	}
+
+	// For languages with different patterns, try alternative approaches
+	language := DetectProgrammingLanguage(filePath)
+	switch language {
+	case LanguageGo:
+		return p.extractGoSymbolName(node, content)
+	case LanguageJavaScript, LanguageTypeScript, LanguageTSX:
+		return p.extractJSSymbolName(node, content)
+	case LanguagePython:
+		return p.extractPythonSymbolName(node, content)
+	case LanguageJava:
+		return p.extractJavaSymbolName(node, content)
+	case LanguageCpp:
+		return p.extractCppSymbolName(node, content)
+	}
+
+	// Fallback: look for any identifier in the node
+	return p.findFirstIdentifier(node, content)
+}
+
+// extractGoSymbolName extracts symbol names from Go AST nodes
+func (p *Parser) extractGoSymbolName(node *sitter.Node, content string) string {
+	nodeType := node.Type()
+	
+	switch nodeType {
+	case "function_declaration", "method_declaration":
+		// Look for the function name in the function spec
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child != nil && child.Type() == "function_spec" {
+				return p.extractGoSymbolName(child, content)
+			}
+		}
+	case "function_spec":
+		// Function name is usually the first identifier
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child != nil && strings.Contains(child.Type(), "identifier") {
+				return p.getNodeText(child, content)
+			}
+		}
+	case "type_declaration", "var_declaration", "const_declaration":
+		// Look for the type/var/const spec
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child != nil && (strings.Contains(child.Type(), "spec") || strings.Contains(child.Type(), "declaration")) {
+				return p.extractGoSymbolName(child, content)
+			}
+		}
+	}
+	
+	return p.findFirstIdentifier(node, content)
+}
+
+// extractJSSymbolName extracts symbol names from JavaScript/TypeScript AST nodes
+func (p *Parser) extractJSSymbolName(node *sitter.Node, content string) string {
+	nodeType := node.Type()
+	
+	switch nodeType {
+	case "function_declaration", "function_expression", "arrow_function":
+		// Look for the function name
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child != nil && child.Type() == "identifier" {
+				return p.getNodeText(child, content)
+			}
+		}
+	case "class_declaration":
+		// Look for the class name
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child != nil && child.Type() == "identifier" {
+				return p.getNodeText(child, content)
+			}
+		}
+	case "variable_declarator":
+		// Look for the variable name
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child != nil && child.Type() == "identifier" {
+				return p.getNodeText(child, content)
+			}
+		}
+	}
+	
+	return p.findFirstIdentifier(node, content)
+}
+
+// extractPythonSymbolName extracts symbol names from Python AST nodes
+func (p *Parser) extractPythonSymbolName(node *sitter.Node, content string) string {
+	nodeType := node.Type()
+	
+	switch nodeType {
+	case "function_definition":
+		// Look for the function name
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child != nil && child.Type() == "identifier" {
+				return p.getNodeText(child, content)
+			}
+		}
+	case "class_definition":
+		// Look for the class name
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child != nil && child.Type() == "identifier" {
+				return p.getNodeText(child, content)
+			}
+		}
+	}
+	
+	return p.findFirstIdentifier(node, content)
+}
+
+// extractJavaSymbolName extracts symbol names from Java AST nodes
+func (p *Parser) extractJavaSymbolName(node *sitter.Node, content string) string {
+	nodeType := node.Type()
+	
+	switch nodeType {
+	case "method_declaration", "constructor_declaration":
+		// Look for the method/constructor name
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child != nil && child.Type() == "identifier" {
+				return p.getNodeText(child, content)
+			}
+		}
+	case "class_declaration", "interface_declaration":
+		// Look for the class/interface name
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child != nil && child.Type() == "identifier" {
+				return p.getNodeText(child, content)
+			}
+		}
+	}
+	
+	return p.findFirstIdentifier(node, content)
+}
+
+// extractCppSymbolName extracts symbol names from C++ AST nodes
+func (p *Parser) extractCppSymbolName(node *sitter.Node, content string) string {
+	nodeType := node.Type()
+	
+	switch nodeType {
+	case "function_definition", "function_declarator":
+		// Look for the function name
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child != nil && child.Type() == "identifier" {
+				return p.getNodeText(child, content)
+			}
+		}
+	case "class_specifier", "struct_specifier":
+		// Look for the class/struct name
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child != nil && child.Type() == "identifier" {
+				return p.getNodeText(child, content)
+			}
+		}
+	}
+	
+	return p.findFirstIdentifier(node, content)
+}
+
+// findFirstIdentifier finds the first identifier in a node tree
+func (p *Parser) findFirstIdentifier(node *sitter.Node, content string) string {
+	if node == nil {
+		return ""
+	}
+	
+	if strings.Contains(node.Type(), "identifier") {
+		return p.getNodeText(node, content)
+	}
+	
+	childCount := int(node.ChildCount())
+	for i := 0; i < childCount; i++ {
+		child := node.Child(i)
+		if child != nil {
+			if result := p.findFirstIdentifier(child, content); result != "" {
+				return result
+			}
+		}
+	}
+	
 	return ""
 }
 
@@ -271,7 +467,107 @@ func (p *Parser) extractDependencies(node *sitter.Node, content string, isRootFu
 
 	p.walkNodeForDependencies(node, content, &dependencies, isRootFunction, true)
 
-	return dependencies
+	// Filter out standard library calls and basic operations
+	return p.filterDependencies(dependencies)
+}
+
+// filterDependencies filters out standard library calls and basic operations
+func (p *Parser) filterDependencies(dependencies []Dependency) []Dependency {
+	var filtered []Dependency
+	
+	for _, dep := range dependencies {
+		if p.shouldIncludeDependency(dep) {
+			filtered = append(filtered, dep)
+		}
+	}
+	
+	return filtered
+}
+
+// shouldIncludeDependency determines if a dependency should be included
+func (p *Parser) shouldIncludeDependency(dep Dependency) bool {
+	// Skip empty names
+	if dep.Name == "" {
+		return false
+	}
+	
+	// Skip standard library calls
+	if p.isStandardLibraryCall(dep.Name) {
+		return false
+	}
+	
+	// Skip basic operations and common patterns
+	if p.isBasicOperation(dep.Name) {
+		return false
+	}
+	
+	// Skip self-references and common patterns
+	if p.isSelfReference(dep.Name) {
+		return false
+	}
+	
+	return true
+}
+
+// isStandardLibraryCall checks if a call is to a standard library function
+func (p *Parser) isStandardLibraryCall(name string) bool {
+	// Common standard library patterns
+	stdLibPatterns := []string{
+		"std::", "java.", "System.", "String.", "Integer.", "List.", "Map.", "Set.",
+		"os.", "sys.", "json.", "time.", "datetime.", "re.", "collections.",
+		"fmt.", "strings.", "strconv.", "io.", "net.", "http.", "encoding.",
+		"console.", "Math.", "Array.", "Object.", "JSON.", "Date.",
+		"print", "println", "printf", "sprintf", "fprintf",
+		"len", "cap", "make", "new", "append", "copy",
+		"len", "str", "int", "float", "bool", "list", "dict", "set",
+		"toString", "equals", "hashCode", "compareTo",
+		"substring", "indexOf", "contains", "startsWith", "endsWith",
+		"toLowerCase", "toUpperCase", "trim", "split", "join",
+		"push", "pop", "shift", "unshift", "slice", "splice",
+		"add", "remove", "get", "set", "put", "getOrDefault",
+	}
+	
+	for _, pattern := range stdLibPatterns {
+		if strings.Contains(name, pattern) {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// isBasicOperation checks if a call is a basic operation
+func (p *Parser) isBasicOperation(name string) bool {
+	basicOps := []string{
+		"+", "-", "*", "/", "%", "=", "==", "!=", "<", ">", "<=", ">=",
+		"&&", "||", "!", "&", "|", "^", "<<", ">>",
+		"++", "--", "+=", "-=", "*=", "/=", "%=",
+		"->", ".", "::", "[]", "()", "{}",
+	}
+	
+	for _, op := range basicOps {
+		if name == op {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// isSelfReference checks if a call is a self-reference
+func (p *Parser) isSelfReference(name string) bool {
+	selfRefs := []string{
+		"this", "self", "super", "base", "me", "current",
+		"this.", "self.", "super.", "base.", "me.", "current.",
+	}
+	
+	for _, ref := range selfRefs {
+		if strings.Contains(name, ref) {
+			return true
+		}
+	}
+	
+	return false
 }
 
 // walkNodeForDependencies recursively walks the AST to find function calls
@@ -281,14 +577,15 @@ func (p *Parser) walkNodeForDependencies(node *sitter.Node, content string, depe
 	// Check if this node represents a function call
 	if strings.Contains(nodeType, "call") {
 		call := p.extractDependency(node, content)
-		if call.Name != "" {
+		if call.Name != "" && p.isSignificantCall(call.Name) {
 			*dependencies = append(*dependencies, call)
 		}
 	}
 
+	// Only include declarations/definitions if they're not the root function
 	if !isRootFunction && !isFirstNode && (strings.Contains(nodeType, "declaration") || strings.Contains(nodeType, "definition")) {
 		declaration := p.extractDependency(node, content)
-		if declaration.Name != "" {
+		if declaration.Name != "" && p.isSignificantDeclaration(declaration.Name) {
 			*dependencies = append(*dependencies, declaration)
 		}
 	}
@@ -303,6 +600,53 @@ func (p *Parser) walkNodeForDependencies(node *sitter.Node, content string, depe
 	}
 }
 
+// isSignificantCall determines if a function call is significant enough to include
+func (p *Parser) isSignificantCall(name string) bool {
+	// Skip very short names (likely operators or basic operations)
+	if len(name) <= 2 {
+		return false
+	}
+	
+	// Skip common patterns that are not meaningful dependencies
+	skipPatterns := []string{
+		"get", "set", "add", "remove", "find", "create", "update", "delete",
+		"toString", "equals", "hashCode", "clone", "copy", "clear",
+		"size", "length", "count", "empty", "isEmpty", "hasNext",
+		"next", "previous", "first", "last", "begin", "end",
+	}
+	
+	for _, pattern := range skipPatterns {
+		if strings.EqualFold(name, pattern) {
+			return false
+		}
+	}
+	
+	return true
+}
+
+// isSignificantDeclaration determines if a declaration is significant enough to include
+func (p *Parser) isSignificantDeclaration(name string) bool {
+	// Skip very short names
+	if len(name) <= 2 {
+		return false
+	}
+	
+	// Skip common variable names that are not meaningful
+	skipNames := []string{
+		"i", "j", "k", "x", "y", "z", "a", "b", "c", "n", "m",
+		"temp", "tmp", "var", "val", "item", "obj", "data",
+		"result", "res", "ret", "value", "val", "item", "element",
+	}
+	
+	for _, skipName := range skipNames {
+		if strings.EqualFold(name, skipName) {
+			return false
+		}
+	}
+	
+	return true
+}
+
 // extractFunctionCall extracts a function call from a call expression node
 func (p *Parser) extractDependency(node *sitter.Node, content string) Dependency {
 	call := Dependency{
@@ -311,7 +655,34 @@ func (p *Parser) extractDependency(node *sitter.Node, content string) Dependency
 		Type:    getSymbolType(node.Type()),
 	}
 
+	// Try to extract the function name based on the node type
+	call.Name = p.extractFunctionName(node, content)
+
+	return call
+}
+
+// extractFunctionName extracts the function name from a call expression
+func (p *Parser) extractFunctionName(node *sitter.Node, content string) string {
+	nodeType := node.Type()
+	
+	// Handle different types of call expressions
+	switch {
+	case strings.Contains(nodeType, "call"):
+		return p.extractCallExpressionName(node, content)
+	case strings.Contains(nodeType, "declaration"):
+		return p.extractDeclarationName(node, content)
+	case strings.Contains(nodeType, "definition"):
+		return p.extractDefinitionName(node, content)
+	default:
+		return p.findFirstIdentifier(node, content)
+	}
+}
+
+// extractCallExpressionName extracts the function name from a call expression
+func (p *Parser) extractCallExpressionName(node *sitter.Node, content string) string {
 	childCount := int(node.ChildCount())
+	
+	// Look for the function name in the call expression
 	for i := 0; i < childCount; i++ {
 		child := node.Child(i)
 		if child == nil {
@@ -319,13 +690,90 @@ func (p *Parser) extractDependency(node *sitter.Node, content string) Dependency
 		}
 
 		childType := child.Type()
-		if strings.Contains(childType, "identifier") || strings.Contains(childType, "expression") {
-			call.Name = p.getNodeText(child, content)
-			break
+		
+		// Function name is usually in the first child or in a specific pattern
+		if strings.Contains(childType, "identifier") || 
+		   strings.Contains(childType, "name") ||
+		   strings.Contains(childType, "function") ||
+		   strings.Contains(childType, "expression") {
+			name := p.getNodeText(child, content)
+			if name != "" {
+				return name
+			}
+		}
+		
+		// For method calls, look for the method name
+		if strings.Contains(childType, "member") || strings.Contains(childType, "field") {
+			name := p.extractMethodName(child, content)
+			if name != "" {
+				return name
+			}
 		}
 	}
+	
+	return ""
+}
 
-	return call
+// extractMethodName extracts the method name from a member expression
+func (p *Parser) extractMethodName(node *sitter.Node, content string) string {
+	childCount := int(node.ChildCount())
+	
+	for i := 0; i < childCount; i++ {
+		child := node.Child(i)
+		if child == nil {
+			continue
+		}
+
+		childType := child.Type()
+		if strings.Contains(childType, "identifier") || strings.Contains(childType, "name") {
+			return p.getNodeText(child, content)
+		}
+	}
+	
+	return ""
+}
+
+// extractDeclarationName extracts the name from a declaration
+func (p *Parser) extractDeclarationName(node *sitter.Node, content string) string {
+	childCount := int(node.ChildCount())
+	
+	for i := 0; i < childCount; i++ {
+		child := node.Child(i)
+		if child == nil {
+			continue
+		}
+
+		childType := child.Type()
+		if strings.Contains(childType, "identifier") || 
+		   strings.Contains(childType, "name") ||
+		   strings.Contains(childType, "variable") {
+			return p.getNodeText(child, content)
+		}
+	}
+	
+	return ""
+}
+
+// extractDefinitionName extracts the name from a definition
+func (p *Parser) extractDefinitionName(node *sitter.Node, content string) string {
+	childCount := int(node.ChildCount())
+	
+	for i := 0; i < childCount; i++ {
+		child := node.Child(i)
+		if child == nil {
+			continue
+		}
+
+		childType := child.Type()
+		if strings.Contains(childType, "identifier") || 
+		   strings.Contains(childType, "name") ||
+		   strings.Contains(childType, "function") ||
+		   strings.Contains(childType, "class") {
+			return p.getNodeText(child, content)
+		}
+	}
+	
+	return ""
 }
 
 // getNodeText extracts the text content of a node
@@ -374,38 +822,73 @@ func (p *Parser) walkASTForSymbols(node *sitter.Node, filePath, content string, 
 }
 
 func getSymbolType(nodeType string) SymbolType {
+	// First, check for exact matches
+	switch nodeType {
+	case "function_declaration", "function_definition", "function_expression", "arrow_function":
+		return SymbolTypeFunction
+	case "method_declaration", "method_definition":
+		return SymbolTypeMethod
+	case "class_declaration", "class_definition", "class_specifier":
+		return SymbolTypeClass
+	case "interface_declaration", "interface_type":
+		return SymbolTypeInterface
+	case "struct_declaration", "struct_specifier", "struct_type":
+		return SymbolTypeStruct
+	case "enum_declaration", "enum_specifier":
+		return SymbolTypeEnum
+	case "variable_declaration", "var_declaration", "const_declaration":
+		return SymbolTypeVariable
+	case "import_statement", "import_declaration":
+		return SymbolTypeImport
+	case "package_declaration":
+		return SymbolTypePackage
+	}
+
+	// Check for patterns
 	switch {
 	case strings.Contains(nodeType, "function"):
 		return SymbolTypeFunction
-
 	case strings.Contains(nodeType, "method"):
 		return SymbolTypeMethod
-
 	case strings.Contains(nodeType, "class"):
 		return SymbolTypeClass
-
 	case strings.Contains(nodeType, "interface"):
 		return SymbolTypeInterface
-
-	case strings.Contains(nodeType, "type_"):
-		return SymbolTypeType
-
 	case strings.Contains(nodeType, "struct"):
 		return SymbolTypeStruct
-
 	case strings.Contains(nodeType, "enum"):
 		return SymbolTypeEnum
-
-	case strings.Contains(nodeType, "var"):
+	case strings.Contains(nodeType, "var") || strings.Contains(nodeType, "variable"):
 		return SymbolTypeVariable
-
 	case strings.Contains(nodeType, "const"):
 		return SymbolTypeConstant
-
+	case strings.Contains(nodeType, "type"):
+		return SymbolTypeType
 	case strings.Contains(nodeType, "import"):
 		return SymbolTypeImport
-
+	case strings.Contains(nodeType, "package"):
+		return SymbolTypePackage
+	case strings.Contains(nodeType, "call"):
+		return SymbolTypeFunction // Function calls
+	case strings.Contains(nodeType, "declaration"):
+		// Default to variable for generic declarations
+		return SymbolTypeVariable
 	default:
 		return SymbolType(nodeType)
 	}
+}
+
+// getSourceFile gets the source file path from a node
+func (p *Parser) getSourceFile(node *sitter.Node) string {
+	// Tree-sitter nodes don't directly store file paths
+	// This is a placeholder - in practice, you'd need to pass the file path
+	// to the parsing functions and store it in the node context
+	return ""
+}
+
+// DetectProgrammingLanguageFromNode detects programming language from a node's context
+func (p *Parser) DetectProgrammingLanguageFromNode(node *sitter.Node) ProgrammingLanguage {
+	// Since nodes don't store file paths, we need to detect from content
+	// This is a simplified approach - in practice, you'd want to pass the file path
+	return LanguageText
 }
