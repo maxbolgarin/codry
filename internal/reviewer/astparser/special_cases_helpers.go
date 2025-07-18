@@ -55,7 +55,7 @@ func (sch *SpecialCasesHandler) findAllSymbolsInFile(filePath, content string) (
 		return []AffectedSymbol{}, nil
 	}
 
-	rootNode, err := sch.astParser.ParseFileToAST(context.Background(), filePath, content)
+	rootNode, err := sch.astParser.GetFileAST(context.Background(), filePath, content)
 	if err != nil {
 		return nil, err
 	}

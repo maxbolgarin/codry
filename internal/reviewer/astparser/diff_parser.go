@@ -988,7 +988,7 @@ func (dp *DiffParser) CreateLineToSymbolMap(filePath, content string, astParser 
 	lineToSymbols := make(map[int][]AffectedSymbol)
 
 	// Parse file to get all symbols
-	rootNode, err := astParser.ParseFileToAST(context.Background(), filePath, content)
+	rootNode, err := astParser.GetFileAST(context.Background(), filePath, content)
 	if err != nil {
 		return nil, err
 	}

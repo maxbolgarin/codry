@@ -2,7 +2,6 @@ package astparser
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -20,48 +19,6 @@ type ContextManager struct {
 	symbolAnalyzer *ExternalRefsAnalyzer
 	diffParser     *DiffParser
 	log            logze.Logger
-}
-
-// ChangeType represents the type of file change
-type ChangeType string
-
-const (
-	ChangeTypeModified ChangeType = "Modified"
-	ChangeTypeAdded    ChangeType = "Added"
-	ChangeTypeDeleted  ChangeType = "Deleted"
-	ChangeTypeRenamed  ChangeType = "Renamed"
-)
-
-// ContextBundle represents the final structured context for LLM
-type ContextBundle struct {
-	Files []FileContext `json:"files"`
-}
-
-// FileContext represents context for a single changed file
-type FileContext struct {
-	FilePath        string           `json:"file_path"`
-	ChangeType      ChangeType       `json:"change_type"`
-	Diff            string           `json:"diff_hunk"`
-	AffectedSymbols []AffectedSymbol `json:"affected_symbols"`
-	RelatedFiles    []RelatedFile    `json:"related_files"`
-	ConfigContext   *ConfigContext   `json:"config_context,omitempty"`
-}
-
-// RelatedFile represents a file related to the changed file
-type RelatedFile struct {
-	FilePath         string `json:"file_path"`
-	Relationship     string `json:"relationship"` // "caller", "dependency", "test", "same_package"
-	CodeSnippet      string `json:"code_snippet"`
-	Line             int    `json:"line,omitempty"`
-	RelevantFunction string `json:"relevant_function,omitempty"`
-}
-
-// ConfigContext represents context for configuration file changes
-type ConfigContext struct {
-	ConfigType       string        `json:"config_type"` // "yaml", "json", "env", etc.
-	ChangedKeys      []string      `json:"changed_keys"`
-	ConsumingCode    []RelatedFile `json:"consuming_code"`
-	ImpactAssessment string        `json:"impact_assessment"`
 }
 
 // newContextFinder creates a new context finder
@@ -84,11 +41,9 @@ type ContextRequest struct {
 }
 
 // GatherContext gathers comprehensive context for a merge request
-func (cf *ContextManager) GatherContext(ctx context.Context, request ContextRequest) (*ContextBundle, error) {
-	bundle := &ContextBundle{
-		Files: make([]FileContext, 0, len(request.FileDiffs)),
-	}
+func (cf *ContextManager) GatherFilesContext(ctx context.Context, request ContextRequest) ([]*FileContext, error) {
 
+	files := make([]*FileContext, 0, len(request.FileDiffs))
 	// Process each changed file
 	for _, fileDiff := range request.FileDiffs {
 		fileContext, err := cf.processFileDiff(ctx, request, fileDiff)
@@ -98,11 +53,11 @@ func (cf *ContextManager) GatherContext(ctx context.Context, request ContextRequ
 		}
 
 		if fileContext != nil {
-			bundle.Files = append(bundle.Files, *fileContext)
+			files = append(files, fileContext)
 		}
 	}
 
-	return bundle, nil
+	return files, nil
 }
 
 // processFileDiff processes a single file diff to extract context
@@ -117,7 +72,9 @@ func (cf *ContextManager) processFileDiff(ctx context.Context, request ContextRe
 	}
 
 	if cf.isConfigFile(fileDiff.NewPath) {
-		return cf.processConfigFile(ctx, request, fileDiff, fileContext)
+		// TODO: add config file processing
+		cf.log.Warn("config file detected, skipping", "file", fileDiff.NewPath)
+		return fileContext, nil
 	}
 
 	// Handle different change types
@@ -134,20 +91,6 @@ func (cf *ContextManager) processFileDiff(ctx context.Context, request ContextRe
 	}
 
 	return fileContext, nil
-}
-
-// determineChangeType determines the type of change for a file
-func (cf *ContextManager) determineChangeType(fileDiff *model.FileDiff) ChangeType {
-	if fileDiff.IsNew {
-		return ChangeTypeAdded
-	}
-	if fileDiff.IsDeleted {
-		return ChangeTypeDeleted
-	}
-	if fileDiff.IsRenamed {
-		return ChangeTypeRenamed
-	}
-	return ChangeTypeModified
 }
 
 // processAddedFile processes a newly added file
@@ -167,13 +110,13 @@ func (cf *ContextManager) processAddedFile(ctx context.Context, request ContextR
 	}
 
 	// Find all symbols in the new file
-	allSymbols, err := cf.astParser.findAllSymbolsInFile(fileDiff.NewPath, content)
+	allSymbols, err := cf.astParser.FindAllSymbolsInFile(ctx, fileDiff.NewPath, content)
 	if err != nil {
 		cf.log.Warn("failed to find symbols in new file", "error", err, "file", fileDiff.NewPath)
 		return fileContext, nil
 	}
 
-	// For each symbol, find if it's already being used (cross-references within the same PR)
+	// For each symbol, find if it's already being used
 	for _, symbol := range allSymbols {
 		// Analyze usage context
 		usageContext, err := cf.symbolAnalyzer.AnalyzeSymbolUsage(ctx, request.RepoDataHead, symbol)
@@ -184,14 +127,31 @@ func (cf *ContextManager) processAddedFile(ctx context.Context, request ContextR
 
 		// Add caller information to related files
 		for _, caller := range usageContext.Callers {
-			relatedFile := RelatedFile{
+			symbol.Callers = append(symbol.Callers, Dependency{
+				Name: caller.FunctionName,
+				Line: caller.LineNumber,
+				Type: SymbolTypeFunction,
+				Code: lang.Check(caller.CodeSnippet, caller.Code),
+			})
+			fileContext.RelatedFiles = append(fileContext.RelatedFiles, RelatedFile{
 				FilePath:         caller.FilePath,
 				Relationship:     "caller",
 				CodeSnippet:      caller.CodeSnippet,
 				Line:             caller.LineNumber,
 				RelevantFunction: caller.FunctionName,
+			})
+		}
+
+		depMap := make(map[string]Dependency)
+		for _, dep := range usageContext.Dependencies {
+			depMap[dep.SymbolName] = Dependency{
+				Name: dep.SymbolName,
+				Code: dep.Code,
 			}
-			fileContext.RelatedFiles = append(fileContext.RelatedFiles, relatedFile)
+		}
+
+		for i := range symbol.Dependencies {
+			symbol.Dependencies[i].Code = depMap[symbol.Dependencies[i].Name].Code
 		}
 
 		// Set usage context for the symbol
@@ -220,7 +180,7 @@ func (cf *ContextManager) processDeletedFile(ctx context.Context, request Contex
 	}
 
 	// Find all symbols that were in the deleted file
-	allSymbols, err := cf.astParser.findAllSymbolsInFile(fileDiff.OldPath, content)
+	allSymbols, err := cf.astParser.FindAllSymbolsInFile(ctx, fileDiff.OldPath, content)
 	if err != nil {
 		cf.log.Warn("failed to find symbols in deleted file", "error", err, "file", fileDiff.OldPath)
 		return fileContext, nil
@@ -234,18 +194,37 @@ func (cf *ContextManager) processDeletedFile(ctx context.Context, request Contex
 			continue
 		}
 
-		// Any callers found indicate potential issues
+		// Add caller information to related files
 		for _, caller := range usageContext.Callers {
-			relatedFile := RelatedFile{
+			symbol.Callers = append(symbol.Callers, Dependency{
+				Name: caller.FunctionName,
+				Line: caller.LineNumber,
+				Type: SymbolTypeFunction,
+				Code: lang.Check(caller.CodeSnippet, caller.Code),
+			})
+			fileContext.RelatedFiles = append(fileContext.RelatedFiles, RelatedFile{
 				FilePath:         caller.FilePath,
-				Relationship:     "broken_caller",
+				Relationship:     "caller",
 				CodeSnippet:      caller.CodeSnippet,
 				Line:             caller.LineNumber,
 				RelevantFunction: caller.FunctionName,
-			}
-			fileContext.RelatedFiles = append(fileContext.RelatedFiles, relatedFile)
+			})
 		}
 
+		depMap := make(map[string]Dependency)
+		for _, dep := range usageContext.Dependencies {
+			depMap[dep.SymbolName] = Dependency{
+				Name: dep.SymbolName,
+				Code: dep.Code,
+			}
+		}
+
+		for i := range symbol.Dependencies {
+			symbol.Dependencies[i].Code = depMap[symbol.Dependencies[i].Name].Code
+		}
+
+		// Set usage context for the symbol
+		symbol.Context.Package = cf.extractPackageFromPath(fileDiff.NewPath)
 		fileContext.AffectedSymbols = append(fileContext.AffectedSymbols, symbol)
 	}
 
@@ -296,66 +275,51 @@ func (cf *ContextManager) processModifiedFile(ctx context.Context, request Conte
 			continue
 		}
 
-		// Add caller information
+		// Add caller information to related files
 		for _, caller := range usageContext.Callers {
-			relatedFile := RelatedFile{
+			symbol.Callers = append(symbol.Callers, Dependency{
+				Name: caller.FunctionName,
+				Line: caller.LineNumber,
+				Type: SymbolTypeFunction,
+				Code: lang.Check(caller.CodeSnippet, caller.Code),
+			})
+			fileContext.RelatedFiles = append(fileContext.RelatedFiles, RelatedFile{
 				FilePath:         caller.FilePath,
 				Relationship:     "caller",
 				CodeSnippet:      caller.CodeSnippet,
 				Line:             caller.LineNumber,
 				RelevantFunction: caller.FunctionName,
-			}
-			fileContext.RelatedFiles = append(fileContext.RelatedFiles, relatedFile)
+			})
 		}
+
+		depMap := make(map[string]Dependency)
+		for _, dep := range usageContext.Dependencies {
+			depMap[dep.SymbolName] = Dependency{
+				Name: dep.SymbolName,
+				Code: dep.Code,
+			}
+		}
+
+		for i := range symbol.Dependencies {
+			symbol.Dependencies[i].Code = depMap[symbol.Dependencies[i].Name].Code
+		}
+
+		// Set usage context for the symbol
+		symbol.Context.Package = cf.extractPackageFromPath(fileDiff.NewPath)
 
 		// Add dependency information
 		for _, dep := range usageContext.Dependencies {
 			if dep.SourceFile == "internal" && dep.SymbolName != "" {
-				relatedFile := RelatedFile{
+				fileContext.RelatedFiles = append(fileContext.RelatedFiles, RelatedFile{
 					FilePath:         dep.SourceFile,
 					Relationship:     "dependency",
 					RelevantFunction: dep.SymbolName,
-				}
-				fileContext.RelatedFiles = append(fileContext.RelatedFiles, relatedFile)
+				})
 			}
 		}
 
 		fileContext.AffectedSymbols = append(fileContext.AffectedSymbols, symbol)
 	}
-
-	return fileContext, nil
-}
-
-// processConfigFile processes changes in configuration files
-func (cf *ContextManager) processConfigFile(ctx context.Context, request ContextRequest, fileDiff *model.FileDiff, fileContext *FileContext) (*FileContext, error) {
-	// Extract changed configuration keys
-	changedKeys := cf.extractChangedConfigKeys(fileDiff.Diff)
-
-	// Find code that consumes this configuration
-	consumers, err := cf.symbolAnalyzer.findConfigFileConsumers(ctx, request.ProjectID, request.MergeRequest.SHA, fileDiff.NewPath)
-	if err != nil {
-		cf.log.Warn("failed to find config file consumers", "error", err, "file", fileDiff.NewPath)
-	}
-
-	// Create config context
-	configContext := &ConfigContext{
-		ConfigType:       cf.detectConfigType(fileDiff.NewPath),
-		ChangedKeys:      changedKeys,
-		ConsumingCode:    make([]RelatedFile, 0),
-		ImpactAssessment: cf.assessConfigImpact(changedKeys),
-	}
-
-	// Add consuming code as related files
-	for _, consumer := range consumers {
-		relatedFile := RelatedFile{
-			FilePath:     consumer,
-			Relationship: "config_consumer",
-		}
-		configContext.ConsumingCode = append(configContext.ConsumingCode, relatedFile)
-		fileContext.RelatedFiles = append(fileContext.RelatedFiles, relatedFile)
-	}
-
-	fileContext.ConfigContext = configContext
 
 	return fileContext, nil
 }
@@ -374,13 +338,6 @@ func (cf *ContextManager) extractContentFromDiff(diff string) string {
 	}
 
 	return strings.Join(content, "\n")
-}
-
-// getBaseFileContent gets the file content from the base branch
-func (cf *ContextManager) getBaseFileContent(ctx context.Context, request model.ReviewRequest, filePath string) (string, error) {
-	// This would ideally get the content from the base branch
-	// For now, we'll try to get it from the current SHA as a fallback
-	return cf.provider.GetFileContent(ctx, request.ProjectID, filePath, request.MergeRequest.SHA)
 }
 
 // isConfigFile checks if a file is a configuration file
@@ -406,121 +363,6 @@ func (cf *ContextManager) isConfigFile(filePath string) bool {
 	}
 
 	return false
-}
-
-// extractChangedConfigKeys extracts configuration keys that were changed
-func (cf *ContextManager) extractChangedConfigKeys(diff string) []string {
-	var keys []string
-	lines := strings.Split(diff, "\n")
-
-	for _, line := range lines {
-		if strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-") {
-			// Simple key extraction (this could be enhanced with proper YAML/JSON parsing)
-			key := cf.extractKeyFromConfigLine(line[1:]) // Remove +/- prefix
-			if key != "" {
-				keys = append(keys, key)
-			}
-		}
-	}
-
-	return keys
-}
-
-// extractKeyFromConfigLine extracts a configuration key from a config file line
-func (cf *ContextManager) extractKeyFromConfigLine(line string) string {
-	line = strings.TrimSpace(line)
-
-	// YAML style: key: value
-	if colonIndex := strings.Index(line, ":"); colonIndex != -1 {
-		key := strings.TrimSpace(line[:colonIndex])
-		// Remove any leading dashes (YAML list items)
-		key = strings.TrimLeft(key, "- ")
-		return key
-	}
-
-	// JSON style: "key": value
-	if strings.Contains(line, "\":") {
-		parts := strings.Split(line, "\":")
-		if len(parts) > 0 {
-			key := strings.Trim(parts[0], "\"")
-			key = strings.TrimSpace(key)
-			return key
-		}
-	}
-
-	return ""
-}
-
-// detectConfigType detects the type of configuration file
-func (cf *ContextManager) detectConfigType(filePath string) string {
-	ext := strings.ToLower(filepath.Ext(filePath))
-	filename := strings.ToLower(filepath.Base(filePath))
-
-	switch ext {
-	case ".yaml", ".yml":
-		return "yaml"
-	case ".json":
-		return "json"
-	case ".toml":
-		return "toml"
-	case ".ini":
-		return "ini"
-	case ".env":
-		return "env"
-	default:
-		// Check specific filenames
-		if filename == "makefile" {
-			return "makefile"
-		}
-		if filename == "dockerfile" {
-			return "dockerfile"
-		}
-		return "unknown"
-	}
-}
-
-// assessConfigImpact provides an impact assessment for configuration changes
-func (cf *ContextManager) assessConfigImpact(changedKeys []string) string {
-	if len(changedKeys) == 0 {
-		return "No configuration keys changed"
-	}
-
-	// Simple impact assessment based on key names
-	highImpactKeys := []string{"database", "db", "password", "secret", "api_key", "token", "host", "port", "url"}
-	mediumImpactKeys := []string{"timeout", "retry", "cache", "log", "debug", "feature", "flag"}
-
-	highImpactCount := 0
-	mediumImpactCount := 0
-
-	for _, key := range changedKeys {
-		lowerKey := strings.ToLower(key)
-
-		isHighImpact := false
-		for _, highKey := range highImpactKeys {
-			if strings.Contains(lowerKey, highKey) {
-				highImpactCount++
-				isHighImpact = true
-				break
-			}
-		}
-
-		if !isHighImpact {
-			for _, mediumKey := range mediumImpactKeys {
-				if strings.Contains(lowerKey, mediumKey) {
-					mediumImpactCount++
-					break
-				}
-			}
-		}
-	}
-
-	if highImpactCount > 0 {
-		return fmt.Sprintf("High impact: %d critical configuration keys changed", highImpactCount)
-	} else if mediumImpactCount > 0 {
-		return fmt.Sprintf("Medium impact: %d configuration keys changed", mediumImpactCount)
-	} else {
-		return fmt.Sprintf("Low impact: %d configuration keys changed", len(changedKeys))
-	}
 }
 
 // extractPackageFromPath extracts package/module name from file path

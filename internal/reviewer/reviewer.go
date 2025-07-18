@@ -62,7 +62,7 @@ func New(cfg Config, provider interfaces.CodeProvider, agent *agent.Agent) (*Rev
 		parser:         astparser.NewDiffParser(),
 		processedMRs:   abstract.NewSafeMapOfMaps[string, string, string](),
 		reviewedMRs:    abstract.NewSafeMap[string, reviewTrackingInfo](),
-		contextBuilder: llmcontext.NewBuilder(provider),
+		contextBuilder: llmcontext.NewBuilder(provider, cfg.Verbose),
 	}
 
 	return s, nil

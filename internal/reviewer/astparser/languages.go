@@ -334,8 +334,8 @@ var symbolNodes = map[string]bool{
 	"lexical_declaration":    true,
 
 	// Python
-	"function_definition": true,
-	"async_function_def":  true,
+	"function_definition":  true,
+	"async_function_def":   true,
 	"decorated_definition": true,
 
 	// Java
@@ -344,7 +344,6 @@ var symbolNodes = map[string]bool{
 	"field_declaration":          true,
 
 	// C/C++
-	"function_definition":                   true,
 	"constructor_or_destructor_declaration": true,
 	"struct_specifier":                      true,
 	"union_specifier":                       true,
@@ -353,78 +352,63 @@ var symbolNodes = map[string]bool{
 	"declaration":                           true,
 
 	// C#
-	"property_declaration":   true,
-	"struct_declaration":     true,
-
-	// PHP
-	"function_definition":    true,
+	"property_declaration": true,
+	"struct_declaration":   true,
 
 	// Ruby
-	"method":                 true,
-	"module":                 true,
-	"def":                    true,
-	"class_definition":       true,
-	"module_definition":      true,
-	"method_definition":      true,
+	"method":            true,
+	"module":            true,
+	"def":               true,
+	"class_definition":  true,
+	"module_definition": true,
 
 	// Rust
-	"function_item":          true,
-	"struct_item":            true,
-	"enum_item":              true,
-	"trait_item":             true,
-	"impl_item":              true,
-	"mod_item":               true,
-	"const_item":             true,
-	"static_item":            true,
+	"function_item": true,
+	"struct_item":   true,
+	"enum_item":     true,
+	"trait_item":    true,
+	"impl_item":     true,
+	"mod_item":      true,
+	"const_item":    true,
+	"static_item":   true,
 
 	// Swift
-	"struct_declaration":     true,
-	"enum_declaration":       true,
-	"protocol_declaration":   true,
-	"variable_declaration":   true,
-	"constant_declaration":   true,
+	"enum_declaration":     true,
+	"protocol_declaration": true,
+	"constant_declaration": true,
 
 	// Kotlin
-	"object_declaration":     true,
+	"object_declaration": true,
 
 	// Scala
-	"object_definition":      true,
-	"trait_definition":       true,
-	"val_definition":         true,
-	"var_definition":         true,
+	"object_definition": true,
+	"trait_definition":  true,
+	"val_definition":    true,
+	"var_definition":    true,
 
 	// Elixir
-	"function":               true,
-	"defp":                   true,
-	"defmodule":              true,
-	"defstruct":              true,
-	"defprotocol":            true,
-
-	// Groovy
-	"variable_declaration":   true,
+	"function":    true,
+	"defp":        true,
+	"defmodule":   true,
+	"defstruct":   true,
+	"defprotocol": true,
 
 	// Lua
-	"function_statement":     true,
+	"function_statement":       true,
 	"local_function_statement": true,
-	"local_statement":        true,
-
-	// Elm
-	"function_declaration":   true,
-	"type_declaration":       true,
-	"type_alias_declaration": true,
+	"local_statement":          true,
 
 	// OCaml
-	"value_definition":       true,
-	"type_definition":        true,
-	"module_definition":      true,
-	"exception_definition":   true,
+	"value_definition":     true,
+	"type_definition":      true,
+	"exception_definition": true,
 
 	// Svelte
-	"script":                 true,
-	"component":              true,
+	"script":    true,
+	"component": true,
 
 	// Generic patterns that might be missed
-	"definition":             true,
-	"specification":          true,
-	"declarator":             true,
+	"definition":    true,
+	"specification": true,
+	"declarator":    true,
 }

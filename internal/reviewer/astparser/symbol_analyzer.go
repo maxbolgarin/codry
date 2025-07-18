@@ -100,7 +100,7 @@ func (sa *ExternalRefsAnalyzer) FindSymbolCallers(ctx context.Context, data *mod
 	for _, file := range getAffectedFiles(data, symbol) {
 		fileCallers, err := sa.analyzeFileForCallers(ctx, file.Content, file.Path, symbol)
 		if err != nil {
-			sa.log.Warn("failed to analyze file for callers", "error", err, "file", file.Path)
+			//sa.log.Warn("failed to analyze file for callers", "error", err, "file", file.Path)
 			continue
 		}
 		callers = append(callers, fileCallers...)
@@ -125,8 +125,7 @@ func (sa *ExternalRefsAnalyzer) analyzeFileForCallers(ctx context.Context, conte
 		return nil, nil
 	}
 
-	// TODO: cache
-	rootNode, err := sa.astParser.ParseFileToAST(ctx, filePath, content)
+	rootNode, err := sa.astParser.GetFileAST(ctx, filePath, content)
 	if err != nil {
 		return nil, errm.Wrap(err, "failed to parse file to AST")
 	}
@@ -168,7 +167,7 @@ func (sa *ExternalRefsAnalyzer) walkASTForCallers(node *sitter.Node, content, fi
 			}
 
 			// Find the containing function
-			containingFunc := sa.findContainingFunctionNode(node, content)
+			containingFunc := sa.findContainingFunctionNode(node, content, filePath)
 			if containingFunc != "" {
 				caller.FunctionName = containingFunc
 			}
@@ -197,12 +196,12 @@ func (sa *ExternalRefsAnalyzer) getCallSiteSnippet(node *sitter.Node, content st
 }
 
 // findContainingFunctionNode finds the name of the function containing a node
-func (sa *ExternalRefsAnalyzer) findContainingFunctionNode(node *sitter.Node, content string) string {
+func (sa *ExternalRefsAnalyzer) findContainingFunctionNode(node *sitter.Node, content, filePath string) string {
 	current := node.Parent()
 
 	for current != nil {
 		if sa.astParser.IsSymbolNode(current.Type()) {
-			return sa.astParser.extractSymbolName(current, content)
+			return sa.astParser.extractSymbolName(current, content, filePath)
 		}
 		current = current.Parent()
 	}
@@ -272,7 +271,7 @@ func (sa *ExternalRefsAnalyzer) findSymbolDefinitionInSnapshot(ctx context.Conte
 
 // findDefinitionInFileWithAST finds symbol definition using AST parsing
 func (sa *ExternalRefsAnalyzer) findDefinitionInFileWithAST(ctx context.Context, file *model.RepositoryFile, symbolName string) (SymbolDefinition, bool) {
-	rootNode, err := sa.astParser.ParseFileToAST(ctx, file.Path, file.Content)
+	rootNode, err := sa.astParser.GetFileAST(ctx, file.Path, file.Content)
 	if err != nil {
 		return SymbolDefinition{}, false
 	}
@@ -289,7 +288,7 @@ func (sa *ExternalRefsAnalyzer) walkASTForDefinition(node *sitter.Node, content,
 
 	// Check for function definitions, variable declarations, etc.
 	if sa.astParser.IsSymbolNode(nodeType) {
-		extractedName := sa.astParser.extractSymbolName(node, content)
+		extractedName := sa.astParser.extractSymbolName(node, content, filePath)
 		if extractedName == symbolName {
 			*definition = SymbolDefinition{
 				FilePath:      filePath,
