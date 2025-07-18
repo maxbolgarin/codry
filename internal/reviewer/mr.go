@@ -30,6 +30,8 @@ func (s *Reviewer) ReviewMergeRequest(ctx context.Context, projectID string, mer
 		return errm.New("merge request is nil")
 	}
 
+	s.log.Infof("reviewing merge request: %s", mergeRequest.Title)
+
 	// Check single review mode - only review once unless there are new changes
 	if s.cfg.SingleReviewMode && s.hasAlreadyBeenReviewed(projectID, mergeRequest) {
 		s.logFlow("MR already reviewed in single review mode, skipping",

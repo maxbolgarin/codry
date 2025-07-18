@@ -153,7 +153,7 @@ func (r *repoDataProvider) loadRepoDataHead(ctx context.Context, projectID strin
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.repoDataHead = repoDataHead
-	r.log.DebugIf(r.isVerbose, "loaded repository data (head)", "mr", r.mr.SHA, "elapsed", timer.ElapsedTime().String())
+	r.log.DebugIf(r.isVerbose, "loaded repository data (head)", "mr", r.mr.IID, "elapsed", timer.ElapsedTime().String())
 	return nil
 }
 
