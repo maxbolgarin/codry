@@ -1,12 +1,10 @@
 package reviewer
 
 import (
-	"path/filepath"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/maxbolgarin/codry/internal/model"
+	"github.com/maxbolgarin/codry/internal/reviewer/llmcontext"
 	"github.com/maxbolgarin/lang"
 )
 
@@ -32,9 +30,9 @@ const (
 )
 
 type Config struct {
-	Generate GenerateConfig `yaml:"generate"`
-	Filter   Filter         `yaml:"filter"`
-	Scoring  ScoringConfig  `yaml:"scoring"`
+	Generate GenerateConfig    `yaml:"generate"`
+	Filter   llmcontext.Filter `yaml:"filter"`
+	Scoring  ScoringConfig     `yaml:"scoring"`
 
 	Verbose          bool          `yaml:"verbose" env:"REVIEW_VERBOSE"`
 	SingleReviewMode bool          `yaml:"single_mode" env:"REVIEW_SINGLE_MODE"`
@@ -50,15 +48,6 @@ type GenerateConfig struct {
 	ChangesOverview    bool `yaml:"changes_overview" env:"REVIEW_CHANGES_OVERVIEW"`
 	ArchitectureReview bool `yaml:"architecture" env:"REVIEW_ARCHITECTURE"`
 	CodeReview         bool `yaml:"code" env:"REVIEW_CODE"`
-}
-
-// Filter represents criteria for filtering files to review
-type Filter struct {
-	MaxFiles          int      `yaml:"max_files"`
-	MaxFileSizeTokens int      `yaml:"max_file_size_tokens"`
-	MaxOverallTokens  int      `yaml:"max_overall_tokens"` // TODO: count this
-	AllowedExtensions []string `yaml:"allowed_extensions"`
-	ExcludedPaths     []string `yaml:"excluded_paths"`
 }
 
 // ScoringMode defines the scoring strategy
@@ -155,21 +144,4 @@ func everythingScoringConfig() ScoringConfig {
 	return ScoringConfig{
 		Mode: ScoringModeEverything,
 	}
-}
-
-func (s *Config) isAllowedExtension(filePath string) bool {
-	ext := strings.ToLower(filepath.Ext(filePath))
-	return slices.Contains(s.Filter.AllowedExtensions, ext)
-}
-
-func (s *Config) isExcludedPath(filePath string) bool {
-	for _, pattern := range s.Filter.ExcludedPaths {
-		if matched, _ := filepath.Match(pattern, filePath); matched {
-			return true
-		}
-		if strings.Contains(filePath, pattern) {
-			return true
-		}
-	}
-	return false
 }

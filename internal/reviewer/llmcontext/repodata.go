@@ -8,7 +8,7 @@ import (
 	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/logze/v2"
 )
 
@@ -36,7 +36,23 @@ func newRepoDataProvider(provider interfaces.CodeProvider, isVerbose bool) *repo
 	return &repoDataProvider{provider: provider, log: logze.With("Module", "repo_data_provider"), isVerbose: isVerbose}
 }
 
-func (r *repoDataProvider) loadData(ctx context.Context, projectID string, mrIID int) error {
+func (r *repoDataProvider) loadMRData(ctx context.Context, projectID string, mrIID int) error {
+	waiterSet := abstract.NewWaiterSet(r.log)
+	waiterSet.Add(ctx, func(ctx context.Context) error {
+		return r.loadMR(ctx, projectID, mrIID)
+	})
+	waiterSet.Add(ctx, func(ctx context.Context) error {
+		return r.loadDiffs(ctx, projectID, mrIID)
+	})
+	err := waiterSet.Await(ctx)
+	if err != nil {
+		return erro.Wrap(err, "failed to load repository data")
+	}
+
+	return nil
+}
+
+func (r *repoDataProvider) loadAllData(ctx context.Context, projectID string, mrIID int) error {
 	waiterSet := abstract.NewWaiterSet(r.log)
 	waiterSet.Add(ctx, func(ctx context.Context) error {
 		return r.loadMR(ctx, projectID, mrIID)
@@ -61,17 +77,20 @@ func (r *repoDataProvider) loadData(ctx context.Context, projectID string, mrIID
 	})
 	err := waiterSet.Await(ctx)
 	if err != nil {
-		return errm.Wrap(err, "failed to load repository data")
+		return erro.Wrap(err, "failed to load repository data")
 	}
 
 	return nil
 }
 
 func (r *repoDataProvider) loadMR(ctx context.Context, projectID string, mrIID int) error {
+	if r.mr != nil {
+		return nil
+	}
 	timer := abstract.StartTimer()
 	mr, err := r.provider.GetMergeRequest(ctx, projectID, mrIID)
 	if err != nil {
-		return errm.Wrap(err, "failed to get merge request")
+		return erro.Wrap(err, "failed to get merge request")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -81,10 +100,13 @@ func (r *repoDataProvider) loadMR(ctx context.Context, projectID string, mrIID i
 }
 
 func (r *repoDataProvider) loadDiffs(ctx context.Context, projectID string, mrIID int) error {
+	if r.diffs != nil {
+		return nil
+	}
 	timer := abstract.StartTimer()
 	diffs, err := r.provider.GetMergeRequestDiffs(ctx, projectID, mrIID)
 	if err != nil {
-		return errm.Wrap(err, "failed to get MR diffs")
+		return erro.Wrap(err, "failed to get MR diffs")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -97,13 +119,13 @@ func (r *repoDataProvider) loadCommitsDiff(ctx context.Context, projectID string
 	timer := abstract.StartTimer()
 	commits, err := r.provider.GetMergeRequestCommits(ctx, projectID, mrIID)
 	if err != nil {
-		return errm.Wrap(err, "failed to get merge request commits")
+		return erro.Wrap(err, "failed to get merge request commits")
 	}
 	var commitsDiff []*model.FileDiff
 	for _, commit := range commits {
 		fileDiffs, err := r.provider.GetCommitDiffs(ctx, projectID, commit.SHA)
 		if err != nil {
-			return errm.Wrap(err, "failed to get commit diffs")
+			return erro.Wrap(err, "failed to get commit diffs")
 		}
 		commitsDiff = append(commitsDiff, fileDiffs...)
 	}
@@ -119,7 +141,7 @@ func (r *repoDataProvider) loadAllComments(ctx context.Context, projectID string
 	timer := abstract.StartTimer()
 	comments, err := r.provider.GetComments(ctx, projectID, mrIID)
 	if err != nil {
-		return errm.Wrap(err, "failed to get comments")
+		return erro.Wrap(err, "failed to get comments")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -132,7 +154,7 @@ func (r *repoDataProvider) loadRepoInfo(ctx context.Context, projectID string) e
 	timer := abstract.StartTimer()
 	repoInfo, err := r.provider.GetRepositoryInfo(ctx, projectID)
 	if err != nil {
-		return errm.Wrap(err, "failed to get repository info")
+		return erro.Wrap(err, "failed to get repository info")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -148,7 +170,7 @@ func (r *repoDataProvider) loadRepoDataHead(ctx context.Context, projectID strin
 	}
 	repoDataHead, err := r.provider.GetRepositorySnapshot(ctx, projectID, r.mr.SHA)
 	if err != nil {
-		return errm.Wrap(err, "failed to get repository data (head)")
+		return erro.Wrap(err, "failed to get repository data (head)")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -169,7 +191,7 @@ func (r *repoDataProvider) loadRepoDataBase(ctx context.Context, projectID strin
 		if branch.Name == r.mr.TargetBranch {
 			repoDataBase, err := r.provider.GetRepositorySnapshot(ctx, projectID, branch.SHA)
 			if err != nil {
-				return errm.Wrap(err, "failed to get repository data")
+				return erro.Wrap(err, "failed to get repository data")
 			}
 			r.mu.Lock()
 			defer r.mu.Unlock()
@@ -178,5 +200,5 @@ func (r *repoDataProvider) loadRepoDataBase(ctx context.Context, projectID strin
 			return nil
 		}
 	}
-	return errm.New("failed to find repository data for base branch")
+	return erro.New("failed to find repository data for base branch")
 }

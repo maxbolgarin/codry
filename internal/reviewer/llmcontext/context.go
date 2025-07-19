@@ -11,13 +11,26 @@ import (
 
 // ContextBundle represents the final structured context for LLM
 type ContextBundle struct {
-	Files     []*astparser.FileContext `json:"files"`
-	MRContext *MRContext               `json:"mr_context"`
+	FilesForReview  []*FileContext `json:"files"`
+	MR              *MRContext     `json:"mr_context"`
+	TotalDiffLength int64          `json:"total_diff_length"`
+}
+
+type FileContext struct {
+	Diff    *model.FileDiff        `json:"diff"`
+	Context *astparser.FileContext `json:"context"`
 }
 
 // MRContext holds comprehensive metadata about a merge request
 type MRContext struct {
 	// Basic MR information
+	IID    int    `json:"-"`
+	IIDStr string `json:"-"`
+	SHA    string `json:"-"`
+
+	SourceBranch string `json:"source_branch"`
+	TargetBranch string `json:"target_branch"`
+
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	BranchName  string    `json:"branch_name"`

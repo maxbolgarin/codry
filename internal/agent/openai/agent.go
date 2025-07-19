@@ -8,7 +8,7 @@ import (
 	"github.com/maxbolgarin/cliex"
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 )
 
@@ -28,7 +28,7 @@ type Agent struct {
 // NewAgent creates a new OpenAI agent
 func New(ctx context.Context, cli *cliex.HTTP, config model.ModelConfig) (*Agent, error) {
 	if config.APIKey == "" {
-		return nil, errm.New("OpenAI API key is required")
+		return nil, erro.New("OpenAI API key is required")
 	}
 	config.Model = lang.Check(config.Model, defaultModel)
 	config.URL = lang.Check(config.URL, defaultURL)
@@ -43,7 +43,7 @@ func New(ctx context.Context, cli *cliex.HTTP, config model.ModelConfig) (*Agent
 	// Test connection if needed (may take tokens)
 	if config.IsTest {
 		if err := agent.testConnection(ctx); err != nil {
-			return nil, errm.Wrap(err, "failed to connect to OpenAI API")
+			return nil, erro.Wrap(err, "failed to connect to OpenAI API")
 		}
 	}
 
@@ -74,12 +74,12 @@ func (a *Agent) CallAPI(ctx context.Context, req model.APIRequest) (model.APIRes
 	requestURL := lang.Check(req.URL, a.cfg.URL)
 	_, err := a.cli.Post(ctx, requestURL, reqBody, &respBody)
 	if err != nil {
-		return model.APIResponse{}, errm.Wrap(err, "failed to make API request")
+		return model.APIResponse{}, erro.Wrap(err, "failed to make API request")
 	}
 
 	// Check for API errors
 	if respBody.Error != nil {
-		return model.APIResponse{}, errm.Errorf("OpenAI API error: %s", respBody.Error.Message)
+		return model.APIResponse{}, erro.New("OpenAI API error: %s", respBody.Error.Message)
 	}
 
 	// Extract response
@@ -111,7 +111,7 @@ func (a *Agent) testConnection(ctx context.Context) error {
 		URL:         a.cfg.URL,
 	})
 	if err != nil {
-		return errm.Wrap(err, "connection test failed")
+		return erro.Wrap(err, "connection test failed")
 	}
 	return nil
 

@@ -17,7 +17,7 @@ import (
 	"github.com/google/go-github/v57/github"
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/logze/v2"
 	"golang.org/x/oauth2"
 )
@@ -38,7 +38,7 @@ type Provider struct {
 // New creates a new GitHub provider
 func New(config model.ProviderConfig) (*Provider, error) {
 	if config.Token == "" {
-		return nil, errm.New("GitHub token is required")
+		return nil, erro.New("GitHub token is required")
 	}
 	log := logze.With("provider", "github", "component", "provider")
 
@@ -56,7 +56,7 @@ func New(config model.ProviderConfig) (*Provider, error) {
 		var err error
 		client, err = github.NewClient(tc).WithEnterpriseURLs(config.BaseURL, config.BaseURL)
 		if err != nil {
-			return nil, errm.Wrap(err, "failed to create Git	Hub Enterprise client")
+			return nil, erro.Wrap(err, "failed to create Git	Hub Enterprise client")
 		}
 	}
 
@@ -75,7 +75,7 @@ func (p *Provider) ValidateWebhook(payload []byte, signature string) error {
 
 	// GitHub signature format: "sha256=<signature>"
 	if !strings.HasPrefix(signature, "sha256=") {
-		return errm.New("invalid GitHub signature format")
+		return erro.New("invalid GitHub signature format")
 	}
 
 	// Extract the signature
@@ -88,7 +88,7 @@ func (p *Provider) ValidateWebhook(payload []byte, signature string) error {
 
 	// Compare signatures
 	if !hmac.Equal([]byte(expectedSignature), []byte(calculatedSignature)) {
-		return errm.New("GitHub webhook signature verification failed")
+		return erro.New("GitHub webhook signature verification failed")
 	}
 
 	return nil
@@ -98,7 +98,7 @@ func (p *Provider) ValidateWebhook(payload []byte, signature string) error {
 func (p *Provider) ParseWebhookEvent(payload []byte) (*model.CodeEvent, error) {
 	var githubPayload githubPayload
 	if err := json.Unmarshal(payload, &githubPayload); err != nil {
-		return nil, errm.Wrap(err, "failed to parse GitHub webhook payload")
+		return nil, erro.Wrap(err, "failed to parse GitHub webhook payload")
 	}
 
 	// Convert reviewers
@@ -147,14 +147,14 @@ func (p *Provider) GetMergeRequest(ctx context.Context, projectID string, mrIID 
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+		return nil, erro.New("invalid GitHub project ID format, expected 'owner/repo'")
 	}
 	owner, repo := parts[0], parts[1]
 
 	// Get pull request
 	pr, _, err := p.client.PullRequests.Get(ctx, owner, repo, mrIID)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get pull request from GitHub")
+		return nil, erro.Wrap(err, "failed to get pull request from GitHub")
 	}
 
 	// Get requested reviewers
@@ -195,7 +195,7 @@ func (p *Provider) GetMergeRequestDiffs(ctx context.Context, projectID string, m
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+		return nil, erro.New("invalid GitHub project ID format, expected 'owner/repo'")
 	}
 	owner, repo := parts[0], parts[1]
 
@@ -206,7 +206,7 @@ func (p *Provider) GetMergeRequestDiffs(ctx context.Context, projectID string, m
 	for {
 		files, resp, err := p.client.PullRequests.ListFiles(ctx, owner, repo, mrIID, opts)
 		if err != nil {
-			return nil, errm.Wrap(err, "failed to list pull request files")
+			return nil, erro.Wrap(err, "failed to list pull request files")
 		}
 
 		allFiles = append(allFiles, files...)
@@ -246,7 +246,7 @@ func (p *Provider) UpdateMergeRequestDescription(ctx context.Context, projectID 
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+		return erro.New("invalid GitHub project ID format, expected 'owner/repo'")
 	}
 	owner, repo := parts[0], parts[1]
 
@@ -257,7 +257,7 @@ func (p *Provider) UpdateMergeRequestDescription(ctx context.Context, projectID 
 
 	_, _, err := p.client.PullRequests.Edit(ctx, owner, repo, mrIID, updateRequest)
 	if err != nil {
-		return errm.Wrap(err, "failed to update pull request description")
+		return erro.Wrap(err, "failed to update pull request description")
 	}
 
 	return nil
@@ -268,7 +268,7 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+		return erro.New("invalid GitHub project ID format, expected 'owner/repo'")
 	}
 	owner, repo := parts[0], parts[1]
 
@@ -285,17 +285,17 @@ func (p *Provider) createPositionedComment(ctx context.Context, owner, repo stri
 	// Get the pull request to obtain the commit SHA
 	pr, _, err := p.client.PullRequests.Get(ctx, owner, repo, mrIID)
 	if err != nil {
-		return errm.Wrap(err, "failed to get pull request for commit SHA")
+		return erro.Wrap(err, "failed to get pull request for commit SHA")
 	}
 
 	head := pr.GetHead()
 	if head == nil {
-		return errm.New("head is nil")
+		return erro.New("head is nil")
 	}
 
 	commitID := head.GetSHA()
 	if commitID == "" {
-		return errm.New("commit SHA is empty")
+		return erro.New("commit SHA is empty")
 	}
 
 	// Create pull request review comment with proper GitHub API format
@@ -332,7 +332,7 @@ func (p *Provider) createPositionedComment(ctx context.Context, owner, repo stri
 
 	_, _, err = p.client.PullRequests.CreateComment(ctx, owner, repo, mrIID, reviewComment)
 	if err != nil {
-		return errm.Wrap(err, "failed to create positioned comment")
+		return erro.Wrap(err, "failed to create positioned comment")
 	}
 
 	return nil
@@ -382,7 +382,7 @@ func (p *Provider) createRegularComment(ctx context.Context, owner, repo string,
 
 	_, _, err := p.client.Issues.CreateComment(ctx, owner, repo, mrIID, githubComment)
 	if err != nil {
-		return errm.Wrap(err, "failed to create pull request comment")
+		return erro.Wrap(err, "failed to create pull request comment")
 	}
 
 	return nil
@@ -446,7 +446,7 @@ func (p *Provider) ListMergeRequests(ctx context.Context, projectID string, filt
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+		return nil, erro.New("invalid GitHub project ID format, expected 'owner/repo'")
 	}
 	owner, repo := parts[0], parts[1]
 
@@ -474,7 +474,7 @@ func (p *Provider) ListMergeRequests(ctx context.Context, projectID string, filt
 	// GitHub doesn't support author filter in list API, so we'll filter afterward
 	prs, _, err := p.client.PullRequests.List(ctx, owner, repo, opts)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to list pull requests")
+		return nil, erro.Wrap(err, "failed to list pull requests")
 	}
 
 	var result []*model.MergeRequest
@@ -549,7 +549,7 @@ func (p *Provider) GetFileContent(ctx context.Context, projectID, filePath, comm
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return "", errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+		return "", erro.New("invalid GitHub project ID format, expected 'owner/repo'")
 	}
 	owner, repo := parts[0], parts[1]
 
@@ -558,21 +558,21 @@ func (p *Provider) GetFileContent(ctx context.Context, projectID, filePath, comm
 		Ref: commitSHA,
 	})
 	if err != nil {
-		return "", errm.Wrap(err, "failed to get file content from GitHub")
+		return "", erro.Wrap(err, "failed to get file content from GitHub")
 	}
 
 	if resp.StatusCode != 200 {
-		return "", errm.New("GitHub API returned status %d", resp.StatusCode)
+		return "", erro.New("GitHub API returned status %d", resp.StatusCode)
 	}
 
 	if fileContent == nil {
-		return "", errm.New("file content is nil")
+		return "", erro.New("file content is nil")
 	}
 
 	// Decode content (GitHub returns base64 encoded content)
 	content, err := fileContent.GetContent()
 	if err != nil {
-		return "", errm.Wrap(err, "failed to decode file content")
+		return "", erro.Wrap(err, "failed to decode file content")
 	}
 
 	return content, nil
@@ -583,7 +583,7 @@ func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int)
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+		return nil, erro.New("invalid GitHub project ID format, expected 'owner/repo'")
 	}
 	owner, repo := parts[0], parts[1]
 
@@ -592,7 +592,7 @@ func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int)
 	// Get issue comments (general PR comments)
 	issueComments, _, err := p.client.Issues.ListComments(ctx, owner, repo, mrIID, &github.IssueListCommentsOptions{})
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get issue comments from GitHub")
+		return nil, erro.Wrap(err, "failed to get issue comments from GitHub")
 	}
 
 	for _, comment := range issueComments {
@@ -613,7 +613,7 @@ func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int)
 	// Get review comments (line-specific comments)
 	reviewComments, _, err := p.client.PullRequests.ListComments(ctx, owner, repo, mrIID, &github.PullRequestListCommentsOptions{})
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get review comments from GitHub")
+		return nil, erro.Wrap(err, "failed to get review comments from GitHub")
 	}
 
 	for _, comment := range reviewComments {
@@ -642,7 +642,7 @@ func (p *Provider) GetMergeRequestCommits(ctx context.Context, projectID string,
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+		return nil, erro.New("invalid GitHub project ID format, expected 'owner/repo'")
 	}
 	owner, repo := parts[0], parts[1]
 
@@ -653,7 +653,7 @@ func (p *Provider) GetMergeRequestCommits(ctx context.Context, projectID string,
 	for {
 		commits, resp, err := p.client.PullRequests.ListCommits(ctx, owner, repo, mrIID, opts)
 		if err != nil {
-			return nil, errm.Wrap(err, "failed to list pull request commits")
+			return nil, erro.Wrap(err, "failed to list pull request commits")
 		}
 
 		allCommits = append(allCommits, commits...)
@@ -679,14 +679,14 @@ func (p *Provider) GetCommitDetails(ctx context.Context, projectID, commitSHA st
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+		return nil, erro.New("invalid GitHub project ID format, expected 'owner/repo'")
 	}
 	owner, repo := parts[0], parts[1]
 
 	// Get commit details
 	commit, _, err := p.client.Repositories.GetCommit(ctx, owner, repo, commitSHA, nil)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get commit details from GitHub")
+		return nil, erro.Wrap(err, "failed to get commit details from GitHub")
 	}
 
 	return p.convertGitHubCommit(commit), nil
@@ -697,14 +697,14 @@ func (p *Provider) GetCommitDiffs(ctx context.Context, projectID, commitSHA stri
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+		return nil, erro.New("invalid GitHub project ID format, expected 'owner/repo'")
 	}
 	owner, repo := parts[0], parts[1]
 
 	// Get commit with files
 	commit, _, err := p.client.Repositories.GetCommit(ctx, owner, repo, commitSHA, nil)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get commit from GitHub")
+		return nil, erro.Wrap(err, "failed to get commit from GitHub")
 	}
 
 	// Convert files to our model
@@ -821,13 +821,13 @@ func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID in
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+		return erro.New("invalid GitHub project ID format, expected 'owner/repo'")
 	}
 	owner, repo := parts[0], parts[1]
 
 	commentIDInt, err := strconv.ParseInt(commentID, 10, 64)
 	if err != nil {
-		return errm.Wrap(err, "invalid comment ID")
+		return erro.Wrap(err, "invalid comment ID")
 	}
 
 	// Try to update as issue comment first
@@ -843,7 +843,7 @@ func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID in
 		Body: &newBody,
 	})
 	if err != nil {
-		return errm.Wrap(err, "failed to update comment")
+		return erro.Wrap(err, "failed to update comment")
 	}
 
 	return nil
@@ -854,14 +854,14 @@ func (p *Provider) GetRepositoryInfo(ctx context.Context, projectID string) (*mo
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+		return nil, erro.New("invalid GitHub project ID format, expected 'owner/repo'")
 	}
 	owner, repo := parts[0], parts[1]
 
 	// Get repository details
 	repository, _, err := p.client.Repositories.Get(ctx, owner, repo)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get repository from GitHub")
+		return nil, erro.Wrap(err, "failed to get repository from GitHub")
 	}
 
 	// Get branches
@@ -873,7 +873,7 @@ func (p *Provider) GetRepositoryInfo(ctx context.Context, projectID string) (*mo
 	for {
 		branches, resp, err := p.client.Repositories.ListBranches(ctx, owner, repo, branchOpts)
 		if err != nil {
-			return nil, errm.Wrap(err, "failed to get branches from GitHub")
+			return nil, erro.Wrap(err, "failed to get branches from GitHub")
 		}
 
 		allBranches = append(allBranches, branches...)
@@ -936,20 +936,20 @@ func (p *Provider) GetRepositorySnapshot(ctx context.Context, projectID, commitS
 	// Parse owner/repo from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid GitHub project ID format, expected 'owner/repo'")
+		return nil, erro.New("invalid GitHub project ID format, expected 'owner/repo'")
 	}
 	owner, repo := parts[0], parts[1]
 
 	// Get commit details for timestamp
 	commit, _, err := p.client.Repositories.GetCommit(ctx, owner, repo, commitSHA, nil)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get commit details")
+		return nil, erro.Wrap(err, "failed to get commit details")
 	}
 
 	// Get repository tree recursively
 	tree, _, err := p.client.Git.GetTree(ctx, owner, repo, commitSHA, true)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get repository tree")
+		return nil, erro.Wrap(err, "failed to get repository tree")
 	}
 
 	// Fetch file contents for each file

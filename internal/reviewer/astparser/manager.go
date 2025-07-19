@@ -7,8 +7,7 @@ import (
 
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
-	"github.com/maxbolgarin/errm"
-	"github.com/maxbolgarin/lang"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/logze/v2"
 )
 
@@ -33,28 +32,30 @@ func NewContextFinder(provider interfaces.CodeProvider) *ContextManager {
 }
 
 type ContextRequest struct {
-	ProjectID    string
-	MergeRequest *model.MergeRequest
-	FileDiffs    []*model.FileDiff
-	RepoDataHead *model.RepositorySnapshot
-	RepoDataBase *model.RepositorySnapshot
+	ProjectID      string
+	MergeRequest   *model.MergeRequest
+	FilesForReview []*model.FileDiff
+	RepoDataHead   *model.RepositorySnapshot
+	RepoDataBase   *model.RepositorySnapshot
 }
 
 // GatherContext gathers comprehensive context for a merge request
 func (cf *ContextManager) GatherFilesContext(ctx context.Context, request ContextRequest) ([]*FileContext, error) {
 
-	files := make([]*FileContext, 0, len(request.FileDiffs))
+	files := make([]*FileContext, 0, len(request.FilesForReview))
 	// Process each changed file
-	for _, fileDiff := range request.FileDiffs {
+	for _, fileDiff := range request.FilesForReview {
 		fileContext, err := cf.processFileDiff(ctx, request, fileDiff)
 		if err != nil {
 			cf.log.Warn("failed to process file diff", "error", err, "file", fileDiff.NewPath)
-			continue
 		}
-
-		if fileContext != nil {
-			files = append(files, fileContext)
+		if fileContext == nil {
+			fileContext = &FileContext{
+				FilePath:   fileDiff.NewPath,
+				ChangeType: cf.determineChangeType(fileDiff),
+			}
 		}
+		files = append(files, fileContext)
 	}
 
 	return files, nil
@@ -66,9 +67,7 @@ func (cf *ContextManager) processFileDiff(ctx context.Context, request ContextRe
 	fileContext := &FileContext{
 		FilePath:        fileDiff.NewPath,
 		ChangeType:      cf.determineChangeType(fileDiff),
-		Diff:            fileDiff.Diff,
 		AffectedSymbols: make([]AffectedSymbol, 0),
-		RelatedFiles:    make([]RelatedFile, 0),
 	}
 
 	if cf.isConfigFile(fileDiff.NewPath) {
@@ -83,7 +82,9 @@ func (cf *ContextManager) processFileDiff(ctx context.Context, request ContextRe
 		return cf.processAddedFile(ctx, request, fileDiff, fileContext)
 
 	case ChangeTypeDeleted:
-		return cf.processDeletedFile(ctx, request, fileDiff, fileContext)
+		// TODO: add deleted?
+		cf.log.Warn("deleted file detected, skipping", "file", fileDiff.NewPath)
+		return fileContext, nil
 
 	case ChangeTypeModified, ChangeTypeRenamed:
 		return cf.processModifiedFile(ctx, request, fileDiff, fileContext)
@@ -136,56 +137,13 @@ func (cf *ContextManager) processAddedFile(ctx context.Context, request ContextR
 	return fileContext, nil
 }
 
-// processDeletedFile processes a deleted file
-func (cf *ContextManager) processDeletedFile(ctx context.Context, request ContextRequest, fileDiff *model.FileDiff, fileContext *FileContext) (*FileContext, error) {
-	fileDiff.OldPath = lang.Check(fileDiff.OldPath, fileDiff.NewPath)
-
-	// For deleted files, we need to get the content from the base branch
-	content := ""
-	for _, file := range request.RepoDataBase.Files {
-		if file.Path == fileDiff.OldPath {
-			content = file.Content
-			break
-		}
-	}
-	if content == "" {
-		cf.log.Warn("failed to get base file content for deleted file", "file", fileDiff.OldPath)
-		return fileContext, nil
-	}
-
-	// Find all symbols that were in the deleted file
-	allSymbols, err := cf.astParser.FindAllSymbolsInFile(ctx, fileDiff.OldPath, content)
-	if err != nil {
-		cf.log.Warn("failed to find symbols in deleted file", "error", err, "file", fileDiff.OldPath)
-		return fileContext, nil
-	}
-
-	// For each symbol, find where it's still being used (this indicates broken code)
-	for _, symbol := range allSymbols {
-		usageContext, err := cf.symbolAnalyzer.AnalyzeSymbolUsage(ctx, request.RepoDataBase, symbol)
-		if err != nil {
-			cf.log.Warn("failed to analyze symbol usage for deleted symbol", "error", err, "symbol", symbol.Name)
-			continue
-		}
-
-		symbol.Callers = usageContext.Callers
-		symbol.Dependencies = usageContext.Dependencies
-
-		// Set usage context for the symbol
-		symbol.Context.Package = cf.extractPackageFromPath(fileDiff.NewPath)
-		fileContext.AffectedSymbols = append(fileContext.AffectedSymbols, symbol)
-	}
-
-	return fileContext, nil
-}
-
 // processModifiedFile processes a modified file
 func (cf *ContextManager) processModifiedFile(ctx context.Context, request ContextRequest, fileDiff *model.FileDiff, fileContext *FileContext) (*FileContext, error) {
 
 	// Parse the diff to get changed lines
 	diffLines, err := cf.diffParser.ParseDiffToLines(fileDiff.Diff)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to parse diff lines")
+		return nil, erro.Wrap(err, "failed to parse diff lines")
 	}
 
 	// Extract line numbers for added and modified lines
@@ -203,7 +161,7 @@ func (cf *ContextManager) processModifiedFile(ctx context.Context, request Conte
 	// Get the current file content (head version)
 	content, err := cf.provider.GetFileContent(ctx, request.ProjectID, fileDiff.NewPath, request.MergeRequest.SHA)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get current file content")
+		return nil, erro.Wrap(err, "failed to get current file content")
 	}
 
 	// Find affected symbols

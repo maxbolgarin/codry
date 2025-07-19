@@ -4,13 +4,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/maxbolgarin/abstract"
 	"github.com/maxbolgarin/codry/internal/agent"
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/codry/internal/reviewer/astparser"
 	"github.com/maxbolgarin/codry/internal/reviewer/llmcontext"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/logze/v2"
 	"github.com/panjf2000/ants/v2"
 )
@@ -24,12 +23,6 @@ type Reviewer struct {
 
 	cfg Config
 	log logze.Logger
-
-	// Track processed MRs and reviewed files
-	processedMRs *abstract.SafeMapOfMaps[string, string, string]
-
-	// Track reviewed MRs to implement single review mode
-	reviewedMRs *abstract.SafeMap[string, reviewTrackingInfo]
 
 	// Context manager for gathering comprehensive MR metadata
 	contextBuilder *llmcontext.Builder
@@ -45,12 +38,12 @@ type reviewTrackingInfo struct {
 // New creates a new reviewer
 func New(cfg Config, provider interfaces.CodeProvider, agent *agent.Agent) (*Reviewer, error) {
 	if err := cfg.PrepareAndValidate(); err != nil {
-		return nil, errm.Wrap(err, "failed to prepare and validate config")
+		return nil, erro.Wrap(err, "failed to prepare and validate config")
 	}
 
 	pool, err := ants.NewPool(defaultPoolSize)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to create ants pool")
+		return nil, erro.Wrap(err, "failed to create ants pool")
 	}
 
 	s := &Reviewer{
@@ -60,9 +53,7 @@ func New(cfg Config, provider interfaces.CodeProvider, agent *agent.Agent) (*Rev
 		log:            logze.With("component", "reviewer"),
 		pool:           pool,
 		parser:         astparser.NewDiffParser(),
-		processedMRs:   abstract.NewSafeMapOfMaps[string, string, string](),
-		reviewedMRs:    abstract.NewSafeMap[string, reviewTrackingInfo](),
-		contextBuilder: llmcontext.NewBuilder(provider, cfg.Verbose),
+		contextBuilder: llmcontext.NewBuilder(provider, cfg.Filter, cfg.Verbose),
 	}
 
 	return s, nil
@@ -83,7 +74,7 @@ func (s *Reviewer) HandleEvent(ctx context.Context, event *model.CodeEvent) erro
 	case s.provider.IsMergeRequestEvent(event):
 		return s.pool.Submit(func() {
 			// TODO: add error handling
-			err := s.ReviewMergeRequest(ctx, event.ProjectID, event.MergeRequest)
+			err := s.ReviewMergeRequest(ctx, event.ProjectID, event.MergeRequest.IID)
 			if err != nil {
 				log.Error("error processing merge request event", "error", err)
 			}
@@ -101,10 +92,10 @@ func (s *Reviewer) HandleEvent(ctx context.Context, event *model.CodeEvent) erro
 	}
 }
 
-func (s *Reviewer) logFlow(msg string, fields ...any) {
+func (s *Reviewer) logFlow(log logze.Logger, msg string, fields ...any) {
 	if s.cfg.Verbose {
-		s.log.Info(msg, fields...)
+		log.Info(msg, fields...)
 	} else {
-		s.log.Debug(msg, fields...)
+		log.Debug(msg, fields...)
 	}
 }

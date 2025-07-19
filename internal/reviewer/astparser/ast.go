@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/maxbolgarin/abstract"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	sitter "github.com/smacker/go-tree-sitter"
 )
 
@@ -36,7 +36,7 @@ func (p *ASTParser) GetFileAST(ctx context.Context, filePath, content string) (*
 	language := DetectProgrammingLanguage(filePath)
 	languageParser, ok := p.languages[language]
 	if !ok {
-		return nil, errm.Errorf("unsupported file type for AST parsing: %s", language)
+		return nil, erro.New("unsupported file type for AST parsing: %s", language)
 	}
 
 	parser := sitter.NewParser()
@@ -44,7 +44,7 @@ func (p *ASTParser) GetFileAST(ctx context.Context, filePath, content string) (*
 
 	tree, err := parser.ParseCtx(ctx, nil, []byte(content))
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to parse AST", "file", filePath)
+		return nil, erro.Wrap(err, "failed to parse AST", "file", filePath)
 	}
 
 	p.astCache.Set(filePath, tree.RootNode())
@@ -92,7 +92,7 @@ func (p *ASTParser) findSmallestEnclosingNodeRecursive(node *sitter.Node, lineNu
 func (p *ASTParser) FindAffectedSymbols(ctx context.Context, filePath, fileContent string, changedLines []int) ([]AffectedSymbol, error) {
 	rootNode, err := p.GetFileAST(ctx, filePath, fileContent)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to parse file to AST", "file", filePath)
+		return nil, erro.Wrap(err, "failed to parse file to AST", "file", filePath)
 	}
 
 	var symbols []AffectedSymbol

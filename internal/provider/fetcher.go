@@ -6,7 +6,7 @@ import (
 
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/logze/v2"
 )
 
@@ -122,7 +122,7 @@ func (f *Fetcher) BatchProcessMRs(ctx context.Context, projectID string, filter 
 		filter.Page = page
 		mrs, err := f.provider.ListMergeRequests(ctx, projectID, filter)
 		if err != nil {
-			return errm.Wrap(err, "failed to fetch merge requests")
+			return erro.Wrap(err, "failed to fetch merge requests")
 		}
 
 		if len(mrs) == 0 {

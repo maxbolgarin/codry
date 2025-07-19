@@ -8,60 +8,61 @@ import (
 
 	"github.com/maxbolgarin/codry/internal/agent/prompts"
 	"github.com/maxbolgarin/codry/internal/model"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/codry/internal/reviewer/llmcontext"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 )
 
 func (s *Reviewer) generateChangesOverview(ctx context.Context, bundle *reviewBundle) {
 	if !s.cfg.Generate.ChangesOverview {
-		s.logFlow("changes overview generation is disabled, skipping")
+		s.logFlow(bundle.log, "changes overview generation is disabled, skipping")
 		return
 	}
-	s.logFlow("generating changes overview")
+	s.logFlow(bundle.log, "generating changes overview")
 
 	err := s.createOrUpdateChangesOverview(ctx, bundle.request, bundle.fullDiffString)
 	if err != nil {
 		msg := "failed to generate changes overview"
 		bundle.log.Err(err, msg)
-		bundle.result.Errors = append(bundle.result.Errors, errm.Wrap(err, msg))
+		bundle.result.Errors = append(bundle.result.Errors, erro.Wrap(err, msg))
 		return
 	}
 
-	s.logFlow("generated and updated changes overview")
+	s.logFlow(bundle.log, "generated and updated changes overview")
 
 	bundle.result.IsChangesOverviewCreated = true
 }
 
-func (s *Reviewer) createOrUpdateChangesOverview(ctx context.Context, request model.ReviewRequest, fullDiff string) error {
+func (s *Reviewer) createOrUpdateChangesOverview(ctx context.Context, request ReviewRequest, fullDiff string) error {
 	changes, err := s.agent.GenerateChangesOverview(ctx, fullDiff)
 	if err != nil {
-		return errm.Wrap(err, "failed to generate changes overview")
+		return erro.Wrap(err, "failed to generate changes overview")
 	}
 
 	// Create the new comment content
-	newComment := s.createCommentWithChangesOverview(changes, request.Changes)
+	newComment := s.createCommentWithChangesOverview(changes, request.Context.FilesForReview)
 
 	// Wrap the overview content with markers
 	wrappedContent := s.wrapOverviewContent(newComment.Body)
 
 	// Check for existing changes overview comment
-	existingComment, err := s.findExistingChangesOverviewComment(ctx, request.ProjectID, request.MergeRequest.IID)
+	existingComment, err := s.findExistingChangesOverviewComment(ctx, request.ProjectID, request.Context.MR.IID)
 	if err != nil {
-		return errm.Wrap(err, "failed to check for existing changes overview comment")
+		return erro.Wrap(err, "failed to check for existing changes overview comment")
 	}
 
 	if existingComment != nil {
 		// Update existing comment
-		err = s.provider.UpdateComment(ctx, request.ProjectID, request.MergeRequest.IID, existingComment.ID, wrappedContent)
+		err = s.provider.UpdateComment(ctx, request.ProjectID, request.Context.MR.IID, existingComment.ID, wrappedContent)
 		if err != nil {
-			return errm.Wrap(err, "failed to update existing changes overview comment")
+			return erro.Wrap(err, "failed to update existing changes overview comment")
 		}
 	} else {
 		// Create new comment with wrapped content
 		newComment.Body = wrappedContent
-		err = s.provider.CreateComment(ctx, request.ProjectID, request.MergeRequest.IID, newComment)
+		err = s.provider.CreateComment(ctx, request.ProjectID, request.Context.MR.IID, newComment)
 		if err != nil {
-			return errm.Wrap(err, "failed to create comment")
+			return erro.Wrap(err, "failed to create comment")
 		}
 	}
 
@@ -86,7 +87,7 @@ func (s *Reviewer) wrapOverviewContent(content string) string {
 func (s *Reviewer) findExistingChangesOverviewComment(ctx context.Context, projectID string, mrIID int) (*model.Comment, error) {
 	comments, err := s.provider.GetComments(ctx, projectID, mrIID)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get comments")
+		return nil, erro.Wrap(err, "failed to get comments")
 	}
 
 	for _, comment := range comments {
@@ -103,7 +104,7 @@ func (s *Reviewer) isChangesOverviewComment(body string) bool {
 	return strings.Contains(body, startMarkerOverview) && strings.Contains(body, endMarkerOverview)
 }
 
-func (s *Reviewer) createCommentWithChangesOverview(files []model.FileChangeInfo, changes []*model.FileDiff) *model.Comment {
+func (s *Reviewer) createCommentWithChangesOverview(files []model.FileChangeInfo, changes []*llmcontext.FileContext) *model.Comment {
 	reviewHeaders := prompts.DefaultLanguages[s.cfg.Language].ListOfChangesHeaders
 
 	slices.SortFunc(files, func(a, b model.FileChangeInfo) int {
@@ -112,7 +113,7 @@ func (s *Reviewer) createCommentWithChangesOverview(files []model.FileChangeInfo
 
 	changesMap := make(map[string]string)
 	for _, change := range changes {
-		changesMap[change.NewPath] = change.Diff
+		changesMap[change.Diff.NewPath] = change.Diff.Diff
 	}
 
 	comment := strings.Builder{}

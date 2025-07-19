@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"time"
 
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 )
 
@@ -43,12 +43,12 @@ func (cfg *Config) PrepareAndValidate() error {
 
 	if cfg.EnableHTTPS {
 		if cfg.CertFilePath == "" || cfg.KeyFilePath == "" {
-			return errm.New("cert_file_path and key_file_path must be set when enable_https is true")
+			return erro.New("cert_file_path and key_file_path must be set when enable_https is true")
 		}
 
 		cert, err := tls.LoadX509KeyPair(cfg.CertFilePath, cfg.KeyFilePath)
 		if err != nil {
-			return errm.Wrap(err, "failed to load certificate and key pair")
+			return erro.Wrap(err, "failed to load certificate and key pair")
 		}
 
 		cfg.Certificate = cert

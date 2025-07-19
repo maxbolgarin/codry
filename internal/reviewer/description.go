@@ -4,45 +4,44 @@ import (
 	"context"
 	"strings"
 
-	"github.com/maxbolgarin/codry/internal/model"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 )
 
 func (s *Reviewer) generateDescription(ctx context.Context, bundle *reviewBundle) {
 	if !s.cfg.Generate.Description {
-		s.logFlow("description generation is disabled, skipping")
+		s.logFlow(bundle.log, "description generation is disabled, skipping")
 		return
 	}
-	s.logFlow("generating description")
+	s.logFlow(bundle.log, "generating description")
 
 	if err := s.createDescription(ctx, bundle.request, bundle.fullDiffString); err != nil {
 		msg := "failed to generate description"
 		bundle.log.Error(msg, "error", err)
-		bundle.result.Errors = append(bundle.result.Errors, errm.Wrap(err, msg))
+		bundle.result.Errors = append(bundle.result.Errors, erro.Wrap(err, msg))
 		return
 	}
 
-	s.logFlow("generated and updated description")
+	s.logFlow(bundle.log, "generated and updated description")
 
 	bundle.result.IsDescriptionCreated = true
 }
 
-func (s *Reviewer) createDescription(ctx context.Context, request model.ReviewRequest, fullDiff string) error {
+func (s *Reviewer) createDescription(ctx context.Context, request ReviewRequest, fullDiff string) error {
 	description, err := s.agent.GenerateDescription(ctx, fullDiff)
 	if err != nil {
-		return errm.Wrap(err, "failed to generate description")
+		return erro.Wrap(err, "failed to generate description")
 	}
 	if description == "" {
-		return errm.New("empty description")
+		return erro.New("empty description")
 	}
 
 	// Update description with changes section
-	newDescription := s.updateDescriptionWithAISection(request.MergeRequest.Description, description)
+	newDescription := s.updateDescriptionWithAISection(request.Context.MR.Description, description)
 
 	// Update MR description
-	err = s.provider.UpdateMergeRequestDescription(ctx, request.ProjectID, request.MergeRequest.IID, newDescription)
+	err = s.provider.UpdateMergeRequestDescription(ctx, request.ProjectID, request.Context.MR.IID, newDescription)
 	if err != nil {
-		return errm.Wrap(err, "failed to update MR description")
+		return erro.Wrap(err, "failed to update MR description")
 	}
 
 	return nil

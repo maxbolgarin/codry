@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/maxbolgarin/codry/internal/model"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 )
 
@@ -51,10 +51,10 @@ type Config struct {
 
 func (c *Config) PrepareAndValidate() error {
 	if c.APIKey == "" {
-		return errm.New("api key is required")
+		return erro.New("api key is required")
 	}
 	if c.Type == "" || !slices.Contains(supportedAgentTypes, c.Type) {
-		return errm.New("invalid agent type: %s", c.Type)
+		return erro.New("invalid agent type: %s", c.Type)
 	}
 
 	c.Temperature = lang.Check(c.Temperature, defaultTemperature)

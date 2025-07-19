@@ -5,49 +5,49 @@ import (
 	"strings"
 
 	"github.com/maxbolgarin/codry/internal/model"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 )
 
 func (s *Reviewer) generateArchitectureReview(ctx context.Context, bundle *reviewBundle) {
 	if !s.cfg.Generate.ArchitectureReview {
-		s.logFlow("architecture review is disabled, skipping")
+		s.logFlow(bundle.log, "architecture review is disabled, skipping")
 		return
 	}
-	s.logFlow("generating architecture review")
+	s.logFlow(bundle.log, "generating architecture review")
 
 	err := s.createOrUpdateArchitectureReview(ctx, bundle.request, bundle.fullDiffString)
 	if err != nil {
 		msg := "failed to generate architecture review"
 		bundle.log.Err(err, msg)
-		bundle.result.Errors = append(bundle.result.Errors, errm.Wrap(err, msg))
+		bundle.result.Errors = append(bundle.result.Errors, erro.Wrap(err, msg))
 		return
 	}
 
-	s.logFlow("generated and updated architecture review")
+	s.logFlow(bundle.log, "generated and updated architecture review")
 
 	bundle.result.IsArchitectureReviewCreated = true
 }
 
-func (s *Reviewer) createOrUpdateArchitectureReview(ctx context.Context, request model.ReviewRequest, fullDiff string) error {
+func (s *Reviewer) createOrUpdateArchitectureReview(ctx context.Context, request ReviewRequest, fullDiff string) error {
 	architectureResult, err := s.agent.GenerateArchitectureReview(ctx, fullDiff)
 	if err != nil {
-		return errm.Wrap(err, "failed to generate architecture review")
+		return erro.Wrap(err, "failed to generate architecture review")
 	}
 
 	// Wrap the architecture result with markers
 	wrappedContent := s.wrapArchitectureContent(architectureResult)
 
 	// Check for existing architecture review comment
-	existingComment, err := s.findExistingArchitectureComment(ctx, request.ProjectID, request.MergeRequest.IID)
+	existingComment, err := s.findExistingArchitectureComment(ctx, request.ProjectID, request.Context.MR.IID)
 	if err != nil {
-		return errm.Wrap(err, "failed to check for existing architecture comment")
+		return erro.Wrap(err, "failed to check for existing architecture comment")
 	}
 
 	if existingComment != nil {
 		// Update existing comment
-		err = s.provider.UpdateComment(ctx, request.ProjectID, request.MergeRequest.IID, existingComment.ID, wrappedContent)
+		err = s.provider.UpdateComment(ctx, request.ProjectID, request.Context.MR.IID, existingComment.ID, wrappedContent)
 		if err != nil {
-			return errm.Wrap(err, "failed to update existing architecture review comment")
+			return erro.Wrap(err, "failed to update existing architecture review comment")
 		}
 	} else {
 		// Create new comment
@@ -56,9 +56,9 @@ func (s *Reviewer) createOrUpdateArchitectureReview(ctx context.Context, request
 			Type: model.CommentTypeGeneral,
 		}
 
-		err = s.provider.CreateComment(ctx, request.ProjectID, request.MergeRequest.IID, comment)
+		err = s.provider.CreateComment(ctx, request.ProjectID, request.Context.MR.IID, comment)
 		if err != nil {
-			return errm.Wrap(err, "failed to create architecture review comment")
+			return erro.Wrap(err, "failed to create architecture review comment")
 		}
 	}
 
@@ -83,7 +83,7 @@ func (s *Reviewer) wrapArchitectureContent(content string) string {
 func (s *Reviewer) findExistingArchitectureComment(ctx context.Context, projectID string, mrIID int) (*model.Comment, error) {
 	comments, err := s.provider.GetComments(ctx, projectID, mrIID)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get comments")
+		return nil, erro.Wrap(err, "failed to get comments")
 	}
 
 	for _, comment := range comments {

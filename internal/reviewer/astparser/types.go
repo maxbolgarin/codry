@@ -1,6 +1,10 @@
 package astparser
 
-import "github.com/maxbolgarin/codry/internal/model"
+import (
+	"encoding/json"
+
+	"github.com/maxbolgarin/codry/internal/model"
+)
 
 // ChangeType represents the type of file change
 type ChangeType string
@@ -16,27 +20,7 @@ const (
 type FileContext struct {
 	FilePath        string           `json:"file_path"`
 	ChangeType      ChangeType       `json:"change_type"`
-	Diff            string           `json:"diff"`
 	AffectedSymbols []AffectedSymbol `json:"affected_symbols"`
-	RelatedFiles    []RelatedFile    `json:"related_files"`
-	ConfigContext   *ConfigContext   `json:"config_context,omitempty"`
-}
-
-// RelatedFile represents a file related to the changed file
-type RelatedFile struct {
-	FilePath         string `json:"file_path"`
-	Relationship     string `json:"relationship"` // "caller", "dependency", "test", "same_package"
-	CodeSnippet      string `json:"code_snippet"`
-	Line             int    `json:"line,omitempty"`
-	RelevantFunction string `json:"relevant_function,omitempty"`
-}
-
-// ConfigContext represents context for configuration file changes
-type ConfigContext struct {
-	ConfigType       string        `json:"config_type"` // "yaml", "json", "env", etc.
-	ChangedKeys      []string      `json:"changed_keys"`
-	ConsumingCode    []RelatedFile `json:"consuming_code"`
-	ImpactAssessment string        `json:"impact_assessment"`
 }
 
 // SymbolUsageContext provides comprehensive context about symbol usage
@@ -122,4 +106,12 @@ func (cf *ContextManager) determineChangeType(fileDiff *model.FileDiff) ChangeTy
 		return ChangeTypeRenamed
 	}
 	return ChangeTypeModified
+}
+
+func (f *FileContext) String() string {
+	json, err := json.MarshalIndent(f, "", " ")
+	if err != nil {
+		return ""
+	}
+	return string(json)
 }

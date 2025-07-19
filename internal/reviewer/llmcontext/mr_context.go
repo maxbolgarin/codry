@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/maxbolgarin/codry/internal/model"
@@ -39,12 +40,17 @@ func gatherMRContext(projectID string, data *repoDataProvider) (*MRContext, erro
 	log := logze.With("project_id", projectID, "mr_iid", data.mr.IID)
 
 	mrContext := &MRContext{
-		Title:      data.mr.Title,
-		BranchName: data.mr.SourceBranch,
-		Author:     data.mr.Author,
-		CreatedAt:  data.mr.CreatedAt,
-		UpdatedAt:  data.mr.UpdatedAt,
-		FileDiffs:  data.diffs,
+		IID:          data.mr.IID,
+		IIDStr:       strconv.Itoa(data.mr.IID),
+		SourceBranch: data.mr.SourceBranch,
+		TargetBranch: data.mr.TargetBranch,
+		SHA:          data.mr.SHA,
+		Title:        data.mr.Title,
+		BranchName:   data.mr.SourceBranch,
+		Author:       data.mr.Author,
+		CreatedAt:    data.mr.CreatedAt,
+		UpdatedAt:    data.mr.UpdatedAt,
+		FileDiffs:    data.diffs,
 	}
 
 	// Step 1: Process description and filter AI content
