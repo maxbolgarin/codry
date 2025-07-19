@@ -8,7 +8,7 @@ import (
 	"github.com/maxbolgarin/codry/internal/reviewer"
 	"github.com/maxbolgarin/codry/internal/server"
 	"github.com/maxbolgarin/contem"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/logze/v2"
 )
 
@@ -30,7 +30,7 @@ func New(ctx contem.Context, cfg Config) (*Codry, error) {
 	}
 
 	if err := service.init(ctx, cfg); err != nil {
-		return nil, errm.Wrap(err, "failed to initialize service")
+		return nil, erro.Wrap(err, "failed to initialize service")
 	}
 
 	return service, nil
@@ -38,7 +38,7 @@ func New(ctx contem.Context, cfg Config) (*Codry, error) {
 
 func (s *Codry) StartWebhook(ctx context.Context) error {
 	if err := s.webhookHandler.Start(ctx); err != nil {
-		return errm.Wrap(err, "failed to start webhook handler")
+		return erro.Wrap(err, "failed to start webhook handler")
 	}
 	return nil
 }
@@ -46,13 +46,14 @@ func (s *Codry) StartWebhook(ctx context.Context) error {
 func (s *Codry) RunReview(ctx context.Context, projectID string) error {
 	mrs, err := s.fetcher.FetchOpenMRs(ctx, projectID)
 	if err != nil {
-		return errm.Wrap(err, "failed to fetch recent merge requests")
+		return erro.Wrap(err, "failed to fetch recent merge requests")
 	}
 	for _, mr := range mrs {
-		err := s.reviewer.ReviewMergeRequest(ctx, projectID, mr)
+		err := s.reviewer.ReviewMergeRequest(ctx, projectID, mr.IID)
 		if err != nil {
-			return errm.Wrap(err, "failed to review merge request")
+			return erro.Wrap(err, "failed to review merge request")
 		}
+		break
 	}
 	return nil
 }
@@ -62,26 +63,26 @@ func (s *Codry) init(ctx contem.Context, cfg Config) (err error) {
 	// Create VCS provider
 	codeProvider, err := provider.NewProvider(cfg.Provider)
 	if err != nil {
-		return errm.Wrap(err, "failed to create VCS provider")
+		return erro.Wrap(err, "failed to create VCS provider")
 	}
 	s.fetcher = provider.NewFetcher(codeProvider)
 
 	// Create AI agent
 	llmAgent, err := agent.New(ctx, cfg.Agent)
 	if err != nil {
-		return errm.Wrap(err, "failed to create AI agent")
+		return erro.Wrap(err, "failed to create AI agent")
 	}
 
 	// Create review service - this is the central orchestrator
 	s.reviewer, err = reviewer.New(cfg.Reviewer, codeProvider, llmAgent)
 	if err != nil {
-		return errm.Wrap(err, "failed to create review service")
+		return erro.Wrap(err, "failed to create review service")
 	}
 
 	// Create webhook handler - just an event source
 	s.webhookHandler, err = server.New(cfg.Server, codeProvider, s.reviewer)
 	if err != nil {
-		return errm.Wrap(err, "failed to create webhook handler")
+		return erro.Wrap(err, "failed to create webhook handler")
 	}
 	ctx.Add(s.webhookHandler.Stop)
 

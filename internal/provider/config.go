@@ -3,7 +3,7 @@ package provider
 import (
 	"slices"
 
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 )
 
 type ProviderType string
@@ -28,10 +28,10 @@ type Config struct {
 
 func (c *Config) PrepareAndValidate() error {
 	if c.Token == "" {
-		return errm.New("token is required")
+		return erro.New("token is required")
 	}
 	if c.Type == "" || !slices.Contains(supportedProviderTypes, c.Type) {
-		return errm.New("invalid provider type: %s", c.Type)
+		return erro.New("invalid provider type: %s", c.Type)
 	}
 
 	return nil

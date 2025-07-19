@@ -6,7 +6,7 @@ import (
 	"github.com/maxbolgarin/codry/internal/provider"
 	"github.com/maxbolgarin/codry/internal/reviewer"
 	"github.com/maxbolgarin/codry/internal/server"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 )
 
 // Config represents the main application configuration
@@ -23,13 +23,13 @@ func LoadConfig(path string) (Config, error) {
 
 	if path == "" {
 		if err := cleanenv.ReadEnv(&cfg); err != nil {
-			return Config{}, errm.Wrap(err, "failed to load config from env")
+			return Config{}, erro.Wrap(err, "failed to load config from env")
 		}
 		return cfg, nil
 	}
 
 	if err := cleanenv.ReadConfig(path, &cfg); err != nil {
-		return Config{}, errm.Wrap(err, "failed to load config")
+		return Config{}, erro.Wrap(err, "failed to load config")
 	}
 
 	return cfg, nil

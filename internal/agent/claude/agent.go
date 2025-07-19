@@ -8,7 +8,7 @@ import (
 	"github.com/maxbolgarin/cliex"
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"gitlab.158-160-60-159.sslip.io/astra-monitoring-icl/go-lib/lang"
 )
 
@@ -28,7 +28,7 @@ type Agent struct {
 // NewAgent creates a new Claude agent
 func New(ctx context.Context, cli *cliex.HTTP, cfg model.ModelConfig) (*Agent, error) {
 	if cfg.APIKey == "" {
-		return nil, errm.New("Claude API key is required")
+		return nil, erro.New("Claude API key is required")
 	}
 	cfg.Model = lang.Check(cfg.Model, defaultModel)
 	cfg.URL = lang.Check(cfg.URL, defaultBaseURL)
@@ -43,7 +43,7 @@ func New(ctx context.Context, cli *cliex.HTTP, cfg model.ModelConfig) (*Agent, e
 	// Test connection
 	if cfg.IsTest {
 		if err := agent.testConnection(ctx); err != nil {
-			return nil, errm.Wrap(err, "failed to connect to Claude API")
+			return nil, erro.Wrap(err, "failed to connect to Claude API")
 		}
 	}
 
@@ -69,12 +69,12 @@ func (a *Agent) CallAPI(ctx context.Context, req model.APIRequest) (model.APIRes
 	var respBody messagesResponse
 	_, err := a.cli.Post(ctx, a.cfg.URL, reqBody, &respBody)
 	if err != nil {
-		return model.APIResponse{}, errm.Wrap(err, "failed to make API request")
+		return model.APIResponse{}, erro.Wrap(err, "failed to make API request")
 	}
 
 	// Check for API errors
 	if respBody.Error != nil {
-		return model.APIResponse{}, errm.Errorf("Claude API error: %s", respBody.Error.Message)
+		return model.APIResponse{}, erro.New("Claude API error: %s", respBody.Error.Message)
 	}
 
 	// Extract response
@@ -112,7 +112,7 @@ func (a *Agent) testConnection(ctx context.Context) error {
 		URL:         a.cfg.URL,
 	})
 	if err != nil {
-		return errm.Wrap(err, "connection test failed")
+		return erro.Wrap(err, "connection test failed")
 	}
 
 	return nil

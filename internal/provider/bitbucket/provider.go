@@ -17,7 +17,7 @@ import (
 	"github.com/maxbolgarin/cliex"
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/logze/v2"
 )
 
@@ -37,7 +37,7 @@ type Provider struct {
 // New creates a new Bitbucket provider
 func New(config model.ProviderConfig) (*Provider, error) {
 	if config.Token == "" {
-		return nil, errm.New("Bitbucket token is required")
+		return nil, erro.New("Bitbucket token is required")
 	}
 	log := logze.With("provider", "bitbucket", "component", "provider")
 
@@ -49,7 +49,7 @@ func New(config model.ProviderConfig) (*Provider, error) {
 
 	cli, err := cliex.New(cliex.WithBaseURL(baseURL), cliex.WithLogger(log))
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to create Bitbucket client")
+		return nil, erro.Wrap(err, "failed to create Bitbucket client")
 	}
 	cli.C().SetBasicAuth("x-auth-token", config.Token)
 
@@ -75,7 +75,7 @@ func (p *Provider) ValidateWebhook(payload []byte, signature string) error {
 	cleanSignature := strings.TrimPrefix(signature, "sha256=")
 
 	if !hmac.Equal([]byte(expectedSignature), []byte(cleanSignature)) {
-		return errm.New("Bitbucket webhook signature verification failed")
+		return erro.New("Bitbucket webhook signature verification failed")
 	}
 
 	return nil
@@ -85,7 +85,7 @@ func (p *Provider) ValidateWebhook(payload []byte, signature string) error {
 func (p *Provider) ParseWebhookEvent(payload []byte) (*model.CodeEvent, error) {
 	var bitbucketPayload bitbucketPayload
 	if err := json.Unmarshal(payload, &bitbucketPayload); err != nil {
-		return nil, errm.Wrap(err, "failed to parse Bitbucket webhook payload")
+		return nil, erro.Wrap(err, "failed to parse Bitbucket webhook payload")
 	}
 
 	// Detect event type from headers or payload
@@ -149,7 +149,7 @@ func (p *Provider) GetMergeRequest(ctx context.Context, projectID string, mrIID 
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+		return nil, erro.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
 	}
 	workspace, repoSlug := parts[0], parts[1]
 
@@ -159,7 +159,7 @@ func (p *Provider) GetMergeRequest(ctx context.Context, projectID string, mrIID 
 	var pr bitbucketPullRequest
 	_, err := p.client.Get(ctx, apiURL, &pr)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get pull request from Bitbucket")
+		return nil, erro.Wrap(err, "failed to get pull request from Bitbucket")
 	}
 
 	// Convert reviewers
@@ -204,7 +204,7 @@ func (p *Provider) GetMergeRequestDiffs(ctx context.Context, projectID string, m
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+		return nil, erro.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
 	}
 	workspace, repoSlug := parts[0], parts[1]
 
@@ -213,7 +213,7 @@ func (p *Provider) GetMergeRequestDiffs(ctx context.Context, projectID string, m
 
 	resp, err := p.client.Get(ctx, apiURL)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get diff from Bitbucket")
+		return nil, erro.Wrap(err, "failed to get diff from Bitbucket")
 	}
 
 	// Parse diff into FileDiff objects
@@ -227,7 +227,7 @@ func (p *Provider) UpdateMergeRequestDescription(ctx context.Context, projectID 
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+		return erro.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
 	}
 	workspace, repoSlug := parts[0], parts[1]
 
@@ -241,7 +241,7 @@ func (p *Provider) UpdateMergeRequestDescription(ctx context.Context, projectID 
 
 	_, err := p.client.Put(ctx, apiURL, updateData)
 	if err != nil {
-		return errm.Wrap(err, "failed to update pull request description")
+		return erro.Wrap(err, "failed to update pull request description")
 	}
 
 	return nil
@@ -252,7 +252,7 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+		return erro.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
 	}
 	workspace, repoSlug := parts[0], parts[1]
 
@@ -288,7 +288,7 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 
 	_, err := p.client.Post(ctx, apiURL, commentData)
 	if err != nil {
-		return errm.Wrap(err, "failed to create comment")
+		return erro.Wrap(err, "failed to create comment")
 	}
 
 	return nil
@@ -447,7 +447,7 @@ func (p *Provider) ListMergeRequests(ctx context.Context, projectID string, filt
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+		return nil, erro.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
 	}
 	workspace, repoSlug := parts[0], parts[1]
 
@@ -486,7 +486,7 @@ func (p *Provider) ListMergeRequests(ctx context.Context, projectID string, filt
 
 	_, err := p.client.Get(ctx, apiURL, &response)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to list pull requests")
+		return nil, erro.Wrap(err, "failed to list pull requests")
 	}
 
 	var result []*model.MergeRequest
@@ -567,7 +567,7 @@ func (p *Provider) GetFileContent(ctx context.Context, projectID, filePath, comm
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return "", errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+		return "", erro.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
 	}
 	workspace, repoSlug := parts[0], parts[1]
 
@@ -576,7 +576,7 @@ func (p *Provider) GetFileContent(ctx context.Context, projectID, filePath, comm
 
 	resp, err := p.client.Get(ctx, apiURL)
 	if err != nil {
-		return "", errm.Wrap(err, "failed to get file content from Bitbucket")
+		return "", erro.Wrap(err, "failed to get file content from Bitbucket")
 	}
 
 	return string(resp.Body()), nil
@@ -587,7 +587,7 @@ func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int)
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+		return nil, erro.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
 	}
 	workspace, repoSlug := parts[0], parts[1]
 
@@ -600,7 +600,7 @@ func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int)
 
 	_, err := p.client.Get(ctx, apiURL, &response)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get comments from Bitbucket")
+		return nil, erro.Wrap(err, "failed to get comments from Bitbucket")
 	}
 
 	var allComments []*model.Comment
@@ -644,7 +644,7 @@ func (p *Provider) GetMergeRequestCommits(ctx context.Context, projectID string,
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+		return nil, erro.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
 	}
 	workspace, repoSlug := parts[0], parts[1]
 
@@ -657,7 +657,7 @@ func (p *Provider) GetMergeRequestCommits(ctx context.Context, projectID string,
 
 	_, err := p.client.Get(ctx, apiURL, &response)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get pull request commits from Bitbucket")
+		return nil, erro.Wrap(err, "failed to get pull request commits from Bitbucket")
 	}
 
 	// Convert to our model
@@ -675,7 +675,7 @@ func (p *Provider) GetCommitDetails(ctx context.Context, projectID, commitSHA st
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+		return nil, erro.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
 	}
 	workspace, repoSlug := parts[0], parts[1]
 
@@ -685,7 +685,7 @@ func (p *Provider) GetCommitDetails(ctx context.Context, projectID, commitSHA st
 	var commit bitbucketCommit
 	_, err := p.client.Get(ctx, apiURL, &commit)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get commit details from Bitbucket")
+		return nil, erro.Wrap(err, "failed to get commit details from Bitbucket")
 	}
 
 	return p.convertBitbucketCommit(commit), nil
@@ -696,7 +696,7 @@ func (p *Provider) GetCommitDiffs(ctx context.Context, projectID, commitSHA stri
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+		return nil, erro.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
 	}
 	workspace, repoSlug := parts[0], parts[1]
 
@@ -705,7 +705,7 @@ func (p *Provider) GetCommitDiffs(ctx context.Context, projectID, commitSHA stri
 
 	resp, err := p.client.Get(ctx, apiURL)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get commit diff from Bitbucket")
+		return nil, erro.Wrap(err, "failed to get commit diff from Bitbucket")
 	}
 
 	// Parse diff into FileDiff objects
@@ -781,7 +781,7 @@ func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID in
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+		return erro.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
 	}
 	workspace, repoSlug := parts[0], parts[1]
 
@@ -797,7 +797,7 @@ func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID in
 
 	_, err := p.client.Put(ctx, apiURL, updateData)
 	if err != nil {
-		return errm.Wrap(err, "failed to update comment")
+		return erro.Wrap(err, "failed to update comment")
 	}
 
 	return nil
@@ -808,7 +808,7 @@ func (p *Provider) GetRepositoryInfo(ctx context.Context, projectID string) (*mo
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+		return nil, erro.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
 	}
 	workspace, repoSlug := parts[0], parts[1]
 
@@ -817,7 +817,7 @@ func (p *Provider) GetRepositoryInfo(ctx context.Context, projectID string) (*mo
 	var repository bitbucketRepository
 	_, err := p.client.Get(ctx, repoURL, &repository)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get repository from Bitbucket")
+		return nil, erro.Wrap(err, "failed to get repository from Bitbucket")
 	}
 
 	// Get branches
@@ -827,7 +827,7 @@ func (p *Provider) GetRepositoryInfo(ctx context.Context, projectID string) (*mo
 	}
 	_, err = p.client.Get(ctx, branchesURL, &branchesResponse)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get branches from Bitbucket")
+		return nil, erro.Wrap(err, "failed to get branches from Bitbucket")
 	}
 
 	// Convert branches
@@ -880,7 +880,7 @@ func (p *Provider) GetRepositorySnapshot(ctx context.Context, projectID, commitS
 	// Parse workspace/repo_slug from projectID
 	parts := strings.Split(projectID, "/")
 	if len(parts) != 2 {
-		return nil, errm.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
+		return nil, erro.New("invalid Bitbucket project ID format, expected 'workspace/repo_slug'")
 	}
 	workspace, repoSlug := parts[0], parts[1]
 
@@ -889,13 +889,13 @@ func (p *Provider) GetRepositorySnapshot(ctx context.Context, projectID, commitS
 	var commit bitbucketCommit
 	_, err := p.client.Get(ctx, commitURL, &commit)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get commit details")
+		return nil, erro.Wrap(err, "failed to get commit details")
 	}
 
 	// Use a recursive approach to get all files
 	files, err := p.getRepositoryFilesRecursive(ctx, workspace, repoSlug, commitSHA, "", "/")
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get repository files")
+		return nil, erro.Wrap(err, "failed to get repository files")
 	}
 
 	// Calculate total size
@@ -930,7 +930,7 @@ func (p *Provider) getRepositoryFilesRecursive(ctx context.Context, workspace, r
 
 	_, err := p.client.Get(ctx, apiURL, &response)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get directory listing")
+		return nil, erro.Wrap(err, "failed to get directory listing")
 	}
 
 	for _, node := range response.Values {

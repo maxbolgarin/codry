@@ -8,7 +8,7 @@ import (
 
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 	"google.golang.org/genai"
 )
@@ -28,7 +28,7 @@ type Agent struct {
 // NewAgent creates a new Gemini agent
 func New(ctx context.Context, cfg model.ModelConfig) (*Agent, error) {
 	if cfg.APIKey == "" {
-		return nil, errm.New("Gemini API key is required")
+		return nil, erro.New("Gemini API key is required")
 	}
 	cfg.Model = lang.Check(cfg.Model, defaultModel)
 
@@ -36,7 +36,7 @@ func New(ctx context.Context, cfg model.ModelConfig) (*Agent, error) {
 	if cfg.ProxyURL != "" {
 		proxyURL, err := url.Parse(cfg.ProxyURL)
 		if err != nil {
-			return nil, errm.Wrap(err, "failed to parse proxy URL")
+			return nil, erro.Wrap(err, "failed to parse proxy URL")
 		}
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
@@ -49,7 +49,7 @@ func New(ctx context.Context, cfg model.ModelConfig) (*Agent, error) {
 		},
 	})
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to create Gemini client")
+		return nil, erro.Wrap(err, "failed to create Gemini client")
 	}
 
 	agent := &Agent{
@@ -59,7 +59,7 @@ func New(ctx context.Context, cfg model.ModelConfig) (*Agent, error) {
 
 	if cfg.IsTest {
 		if err := agent.testConnection(ctx); err != nil {
-			return nil, errm.Wrap(err, "failed to connect to Gemini API")
+			return nil, erro.Wrap(err, "failed to connect to Gemini API")
 		}
 	}
 
@@ -109,19 +109,19 @@ func (a *Agent) handleAPIError(err error) error {
 
 	switch {
 	case strings.Contains(errStr, "location is not supported"):
-		return errm.New("region not supported by Gemini API")
+		return erro.New("region not supported by Gemini API")
 	case strings.Contains(errStr, "429"):
-		return errm.New("rate limit exceeded")
+		return erro.New("rate limit exceeded")
 	case strings.Contains(errStr, "401") || strings.Contains(errStr, "403"):
-		return errm.New("authentication failed")
+		return erro.New("authentication failed")
 	case strings.Contains(errStr, "400"):
-		return errm.New("bad request to Gemini API")
+		return erro.New("bad request to Gemini API")
 	case strings.Contains(errStr, "503"):
-		return errm.New("Gemini API service unavailable")
+		return erro.New("Gemini API service unavailable")
 	case strings.Contains(errStr, "500") || strings.Contains(errStr, "502"):
-		return errm.New("Gemini API server error")
+		return erro.New("Gemini API server error")
 	default:
-		return errm.Wrap(err, "Gemini API error")
+		return erro.Wrap(err, "Gemini API error")
 	}
 }
 

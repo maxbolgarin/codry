@@ -2,16 +2,12 @@ package llmcontext
 
 import (
 	"context"
-	"fmt"
-	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/codry/internal/reviewer/astparser"
+	"github.com/maxbolgarin/erro"
 
-	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/logze/v2"
 )
 
@@ -19,770 +15,159 @@ import (
 type Builder struct {
 	provider       interfaces.CodeProvider
 	contextFinder  *astparser.ContextManager
-	symbolAnalyzer *astparser.ExternalRefsAnalyzer
+	symbolAnalyzer *astparser.Analyzer
 	diffParser     *astparser.DiffParser
-	astParser      *astparser.Parser
+	astParser      *astparser.ASTParser
 	log            logze.Logger
+	isVerbose      bool
 
-	mrContextBuilder *mrContextBuilder
+	cfg Filter
+
+	repoDataProvider *repoDataProvider
 }
 
 // NewBuilder creates a new context bundle builder
-func NewBuilder(provider interfaces.CodeProvider) *Builder {
+func NewBuilder(provider interfaces.CodeProvider, cfg Filter, isVerbose bool) *Builder {
 	return &Builder{
 		provider:         provider,
 		contextFinder:    astparser.NewContextFinder(provider),
-		symbolAnalyzer:   astparser.NewExternalRefsAnalyzer(provider),
+		symbolAnalyzer:   astparser.NewAnalyzer(provider),
 		diffParser:       astparser.NewDiffParser(),
 		astParser:        astparser.NewParser(),
 		log:              logze.With("component", "context_bundle_builder"),
-		mrContextBuilder: newMRContextBuilder(provider),
+		isVerbose:        isVerbose,
+		cfg:              cfg,
+		repoDataProvider: newRepoDataProvider(provider, isVerbose),
 	}
 }
 
 // BuildContext builds a comprehensive context bundle for LLM analysis
 func (cbb *Builder) BuildContext(ctx context.Context, projectID string, mrIID int) (*ContextBundle, error) {
-	mr, err := cbb.provider.GetMergeRequest(ctx, projectID, mrIID)
+	cbb.log.DebugIf(cbb.isVerbose, "loading repository data")
+
+	err := cbb.repoDataProvider.loadMRData(ctx, projectID, mrIID)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get merge request")
+		return nil, erro.Wrap(err, "failed to load repository data")
 	}
-	diffs, err := cbb.provider.GetMergeRequestDiffs(ctx, projectID, mrIID)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to get MR diffs")
-	}
-	allComments, err := cbb.provider.GetComments(ctx, projectID, mrIID)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to get comments")
+	filesForReview, totalDiffLength := cbb.filterFilesForReview()
+	if len(filesForReview) == 0 {
+		return nil, erro.New("no files to review")
 	}
 
-	request := mrContextRequest{
-		ProjectID:    projectID,
-		MergeRequest: mr,
-		Diffs:        diffs,
-		Comments:     allComments,
-	}
-
-	mrContext, err := cbb.mrContextBuilder.gatherMRContext(ctx, request)
+	err = cbb.repoDataProvider.loadAllData(ctx, projectID, mrIID)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get MR context")
+		return nil, erro.Wrap(err, "failed to load repository data")
 	}
+	cbb.log.DebugIf(cbb.isVerbose, "loaded all data for context gathering")
 
-	repoInfo, err := cbb.provider.GetRepositoryInfo(ctx, projectID)
+	mrContext, err := gatherMRContext(projectID, cbb.repoDataProvider)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get repository info")
+		return nil, erro.Wrap(err, "failed to get MR context")
 	}
-
-	repoDataHead, err := cbb.provider.GetRepositorySnapshot(ctx, projectID, mr.SHA)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to get repository data")
-	}
-
-	var repoDataBase *model.RepositorySnapshot
-	for _, branch := range repoInfo.Branches {
-		if branch.Name == mr.TargetBranch {
-			repoDataBase, err = cbb.provider.GetRepositorySnapshot(ctx, projectID, branch.SHA)
-			if err != nil {
-				return nil, errm.Wrap(err, "failed to get repository data")
-			}
-		}
-	}
+	cbb.log.DebugIf(cbb.isVerbose, "gathered MR context")
 
 	contextRequest := astparser.ContextRequest{
-		ProjectID:    projectID,
-		MergeRequest: mr,
-		FileDiffs:    diffs,
-		RepoDataHead: repoDataHead,
-		RepoDataBase: repoDataBase,
+		ProjectID:      projectID,
+		MergeRequest:   cbb.repoDataProvider.mr,
+		FilesForReview: filesForReview,
+		RepoDataHead:   cbb.repoDataProvider.repoDataHead,
+		RepoDataBase:   cbb.repoDataProvider.repoDataBase,
 	}
 
 	// Gather basic context using ContextFinder
-	basicContext, err := cbb.contextFinder.GatherContext(ctx, contextRequest)
+	filesContext, err := cbb.contextFinder.GatherFilesContext(ctx, contextRequest)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to gather basic context")
+		return nil, erro.Wrap(err, "failed to gather basic context")
 	}
 
-	// Enhance with detailed analysis
-	enhancedFiles, err := cbb.enhanceFileContexts(ctx, contextRequest, basicContext.Files)
-	if err != nil {
-		cbb.log.Warn("failed to enhance file contexts", "error", err)
-		// Continue with basic context
-		enhancedFiles = basicContext.Files
+	cbb.log.DebugIf(cbb.isVerbose, "gathered basic context")
+
+	filesForReviewContext := make([]*FileContext, 0, len(filesContext))
+	for i, fileContext := range filesContext {
+		filesForReviewContext = append(filesForReviewContext, &FileContext{
+			Diff:    filesForReview[i],
+			Context: fileContext,
+		})
 	}
-
-	// Build overview
-	overview := cbb.buildOverview(enhancedFiles)
-
-	// Build summary
-	summary := cbb.buildSummary(enhancedFiles, overview)
-
-	// Build metadata
-	metadata := cbb.buildMetadata()
 
 	bundle := &ContextBundle{
-		Overview:  overview,
-		Files:     enhancedFiles,
-		Summary:   summary,
-		Metadata:  metadata,
-		MRContext: mrContext,
+		FilesForReview:  filesForReviewContext,
+		MR:              mrContext,
+		TotalDiffLength: totalDiffLength,
 	}
+
+	cbb.log.DebugIf(cbb.isVerbose, "built context bundle")
 
 	return bundle, nil
 }
 
-// enhanceFileContexts enhances file contexts with detailed symbol analysis
-func (cbb *Builder) enhanceFileContexts(ctx context.Context, request astparser.ContextRequest, files []astparser.FileContext) ([]astparser.FileContext, error) {
-	var enhancedFiles []astparser.FileContext
+func (cbb *Builder) filterFilesForReview() ([]*model.FileDiff, int64) {
+	var filtered []*model.FileDiff
 
-	for _, fileContext := range files {
-		enhanced, err := cbb.enhanceFileContext(ctx, request, fileContext)
-		if err != nil {
-			cbb.log.Warn("failed to enhance file context", "error", err, "file", fileContext.FilePath)
-			// Continue with original context
-			enhancedFiles = append(enhancedFiles, fileContext)
-			continue
-		}
-		enhancedFiles = append(enhancedFiles, *enhanced)
-	}
+	var totalDiffLength int64
 
-	return enhancedFiles, nil
-}
-
-// enhanceFileContext enhances a single file context with detailed analysis
-func (cbb *Builder) enhanceFileContext(ctx context.Context, request astparser.ContextRequest, fileContext astparser.FileContext) (*astparser.FileContext, error) {
-	enhanced := fileContext
-
-	// Get file content for detailed analysis
-	var content string
-	var err error
-
-	if fileContext.ChangeType != astparser.ChangeTypeDeleted {
-		content, err = cbb.provider.GetFileContent(ctx, request.ProjectID, fileContext.FilePath, request.MergeRequest.SHA)
-		if err != nil {
-			cbb.log.Warn("failed to get file content", "error", err, "file", fileContext.FilePath)
-		}
-	}
-
-	// Perform diff impact analysis
-	if content != "" && fileContext.Diff != "" {
-		impact, err := cbb.diffParser.AnalyzeDiffImpact(fileContext.Diff, fileContext.FilePath, content, cbb.astParser)
-		if err == nil {
-			// Add impact information to existing symbols or create new ones
-			enhanced.AffectedSymbols = cbb.mergeSymbolInformation(enhanced.AffectedSymbols, impact.AffectedSymbols)
-		}
-	}
-
-	// Enhance symbol information with usage context
-	for i, symbol := range enhanced.AffectedSymbols {
-		usageContext, err := cbb.symbolAnalyzer.AnalyzeSymbolUsage(ctx, request.RepoDataHead, symbol)
-		if err != nil {
-			cbb.log.Warn("failed to analyze symbol usage", "error", err, "symbol", symbol.Name)
+	for _, file := range cbb.repoDataProvider.diffs {
+		if file.IsDeleted || file.IsBinary {
+			cbb.debugVerbose("skipping deleted or binary file", "file", file.NewPath)
 			continue
 		}
 
-		// Convert usage context to related files
-		enhanced.RelatedFiles = append(enhanced.RelatedFiles, cbb.convertUsageToRelatedFiles(usageContext)...)
+		if len(file.Diff) == 0 {
+			cbb.debugVerbose("skipping empty file", "file", file.NewPath)
+			continue
+		}
 
-		// Update symbol with enhanced context information
-		enhanced.AffectedSymbols[i] = cbb.enhanceSymbolWithContext(symbol, usageContext)
-	}
+		if len(file.Diff) > cbb.cfg.MaxFileSizeTokens {
+			cbb.debugVerbose("skipping due to size", "file", file.NewPath, "size", len(file.Diff), "max_size", cbb.cfg.MaxFileSizeTokens)
+			continue
+		}
 
-	return &enhanced, nil
-}
+		if cbb.cfg.isExcludedPath(file.NewPath) {
+			cbb.debugVerbose("skipping excluded", "file", file.NewPath)
+			continue
+		}
 
-// mergeSymbolInformation merges symbol information from different sources
-func (cbb *Builder) mergeSymbolInformation(existing []astparser.AffectedSymbol, additional []astparser.AffectedSymbol) []astparser.AffectedSymbol {
-	symbolMap := make(map[string]astparser.AffectedSymbol)
+		if !cbb.cfg.isAllowedExtension(file.NewPath) {
+			cbb.debugVerbose("skipping non-code", "file", file.NewPath)
+			continue
+		}
 
-	// Add existing symbols
-	for _, symbol := range existing {
-		key := cbb.getSymbolKey(symbol)
-		symbolMap[key] = symbol
-	}
+		cbb.log.DebugIf(cbb.isVerbose, "adding to review", "file", file.NewPath)
+		filtered = append(filtered, file)
 
-	// Merge or add additional symbols
-	for _, symbol := range additional {
-		key := cbb.getSymbolKey(symbol)
-		if existingSymbol, exists := symbolMap[key]; exists {
-			// Merge information
-			merged := cbb.mergeSymbols(existingSymbol, symbol)
-			symbolMap[key] = merged
-		} else {
-			symbolMap[key] = symbol
+		// Count diff string total size
+		totalDiffLength += int64(len(file.Diff))
+		totalDiffLength += int64(len(file.OldPath))
+		totalDiffLength += int64(len(file.NewPath))
+
+		// Limit number of files per MR
+		if len(filtered) >= cbb.cfg.MaxFiles {
+			cbb.log.Warn("reached maximum files limit", "limit", cbb.cfg.MaxFiles)
+			break
 		}
 	}
 
-	// Convert back to slice
-	var result []astparser.AffectedSymbol
-	for _, symbol := range symbolMap {
-		result = append(result, symbol)
+	if len(filtered) == 0 {
+		cbb.logFlow("no files to review after filtering")
+		return nil, 0
 	}
 
-	return result
+	cbb.logFlow("found files to review",
+		"total_files", len(filtered),
+		"diff_length", totalDiffLength,
+	)
+
+	return filtered, totalDiffLength
 }
 
-// getSymbolKey generates a unique key for a symbol
-func (cbb *Builder) getSymbolKey(symbol astparser.AffectedSymbol) string {
-	return fmt.Sprintf("%s:%s:%d:%d", symbol.FilePath, symbol.Name, symbol.StartLine, symbol.EndLine)
+func (cbb *Builder) debugVerbose(msg string, fields ...any) {
+	cbb.log.DebugIf(cbb.isVerbose, msg, fields...)
 }
 
-// mergeSymbols merges two symbol objects
-func (cbb *Builder) mergeSymbols(symbol1, symbol2 astparser.AffectedSymbol) astparser.AffectedSymbol {
-	merged := symbol1
-
-	// Use the most detailed information
-	if symbol2.FullCode != "" && len(symbol2.FullCode) > len(symbol1.FullCode) {
-		merged.FullCode = symbol2.FullCode
-	}
-
-	if symbol2.DocComment != "" && len(symbol2.DocComment) > len(symbol1.DocComment) {
-		merged.DocComment = symbol2.DocComment
-	}
-
-	// Merge dependencies
-	depMap := make(map[string]astparser.Dependency)
-	for _, dep := range symbol1.Dependencies {
-		depMap[dep.Name] = dep
-	}
-	for _, dep := range symbol2.Dependencies {
-		depMap[dep.Name] = dep
-	}
-
-	merged.Dependencies = make([]astparser.Dependency, 0, len(depMap))
-	for _, dep := range depMap {
-		merged.Dependencies = append(merged.Dependencies, dep)
-	}
-
-	return merged
-}
-
-// convertUsageToRelatedFiles converts symbol usage context to related files
-func (cbb *Builder) convertUsageToRelatedFiles(usage astparser.SymbolUsageContext) []astparser.RelatedFile {
-	var relatedFiles []astparser.RelatedFile
-
-	// Add callers
-	for _, caller := range usage.Callers {
-		relatedFile := astparser.RelatedFile{
-			FilePath:         caller.FilePath,
-			Relationship:     "caller",
-			CodeSnippet:      caller.CodeSnippet,
-			Line:             caller.LineNumber,
-			RelevantFunction: caller.FunctionName,
-		}
-		relatedFiles = append(relatedFiles, relatedFile)
-	}
-
-	// Add dependencies (only internal ones)
-	for _, dep := range usage.Dependencies {
-		if dep.SourceFile == "internal" && dep.SymbolName != "" {
-			relatedFile := astparser.RelatedFile{
-				FilePath:         dep.SourceFile,
-				Relationship:     "dependency",
-				RelevantFunction: dep.SymbolName,
-			}
-			relatedFiles = append(relatedFiles, relatedFile)
-		}
-	}
-
-	return relatedFiles
-}
-
-// enhanceSymbolWithContext enhances a symbol with usage context information
-func (cbb *Builder) enhanceSymbolWithContext(symbol astparser.AffectedSymbol, usage astparser.SymbolUsageContext) astparser.AffectedSymbol {
-	enhanced := symbol
-
-	// Update context information
-	enhanced.Context.Package = cbb.extractPackageFromPath(symbol.FilePath)
-
-	// Set caller count and dependency information in a more structured way
-	// This could be extended to include more detailed usage statistics
-
-	return enhanced
-}
-
-// buildOverview builds the overview context
-func (cbb *Builder) buildOverview(files []astparser.FileContext) OverviewContext {
-	overview := OverviewContext{
-		TotalFiles:        len(files),
-		TotalSymbols:      0,
-		ImpactScore:       0.0,
-		ChangeComplexity:  astparser.ComplexityLow,
-		HighImpactChanges: make([]string, 0),
-		ConfigChanges:     make([]ConfigChangeInfo, 0),
-		DeletedSymbols:    make([]DeletedSymbolInfo, 0),
-		PotentialIssues:   make([]string, 0),
-	}
-
-	var totalImpactScore float64
-	var maxComplexity astparser.ComplexityLevel
-
-	for _, file := range files {
-		// Count symbols
-		overview.TotalSymbols += len(file.AffectedSymbols)
-
-		// Analyze impact and complexity
-		fileComplexity := cbb.assessFileComplexity(file)
-		fileImpact := cbb.calculateFileImpactScore(file)
-
-		totalImpactScore += fileImpact
-
-		// Track maximum complexity
-		if cbb.compareComplexity(fileComplexity, maxComplexity) > 0 {
-			maxComplexity = fileComplexity
-		}
-
-		// Identify high-impact changes
-		if fileImpact > 10.0 { // Threshold for high impact
-			description := fmt.Sprintf("High-impact changes in %s (%d symbols affected)", file.FilePath, len(file.AffectedSymbols))
-			overview.HighImpactChanges = append(overview.HighImpactChanges, description)
-		}
-
-		// Collect configuration changes
-		if file.ConfigContext != nil {
-			configChange := ConfigChangeInfo{
-				FilePath:      file.FilePath,
-				ConfigType:    file.ConfigContext.ConfigType,
-				ChangedKeys:   file.ConfigContext.ChangedKeys,
-				Impact:        file.ConfigContext.ImpactAssessment,
-				AffectedFiles: cbb.extractFilePathsFromRelated(file.ConfigContext.ConsumingCode),
-			}
-			overview.ConfigChanges = append(overview.ConfigChanges, configChange)
-		}
-
-		// Collect deleted symbols
-		if file.ChangeType == astparser.ChangeTypeDeleted {
-			for _, symbol := range file.AffectedSymbols {
-				deletedInfo := DeletedSymbolInfo{
-					Symbol:           symbol,
-					BrokenReferences: cbb.findBrokenReferences(file.RelatedFiles),
-					Impact:           cbb.assessDeletionImpact(symbol, file.RelatedFiles),
-				}
-				overview.DeletedSymbols = append(overview.DeletedSymbols, deletedInfo)
-			}
-		}
-
-		// Collect potential issues
-		overview.PotentialIssues = append(overview.PotentialIssues, cbb.identifyFileIssues(file)...)
-	}
-
-	overview.ImpactScore = totalImpactScore
-	overview.ChangeComplexity = maxComplexity
-
-	return overview
-}
-
-// buildSummary builds the summary context
-func (cbb *Builder) buildSummary(files []astparser.FileContext, overview OverviewContext) SummaryContext {
-	summary := SummaryContext{
-		AffectedAreas:   make([]string, 0),
-		ReviewFocus:     make([]string, 0),
-		Recommendations: make([]string, 0),
-	}
-
-	// Generate changes summary
-	summary.ChangesSummary = cbb.generateChangesSummary(files, overview)
-
-	// Identify affected areas
-	summary.AffectedAreas = cbb.identifyAffectedAreas(files)
-
-	// Determine review focus areas
-	summary.ReviewFocus = cbb.determineReviewFocus(files, overview)
-
-	// Assess risk
-	summary.RiskAssessment = cbb.assessRisk(overview)
-
-	// Generate recommendations
-	summary.Recommendations = cbb.generateRecommendations(files, overview)
-
-	return summary
-}
-
-// buildMetadata builds the metadata context
-func (cbb *Builder) buildMetadata() MetadataContext {
-	return MetadataContext{
-		AnalysisTimestamp:  fmt.Sprintf("%d", time.Now().Unix()),
-		AnalysisVersion:    "1.0",
-		SupportedLanguages: []string{"go", "javascript", "typescript", "python"},
-		Limitations: []string{
-			"AST parsing may fail for syntactically incorrect code",
-			"Cross-repository dependencies are not analyzed",
-			"Dynamic function calls may not be detected",
-			"Generated code analysis may be incomplete",
-		},
-	}
-}
-
-// Helper methods for building overview and summary
-
-// assessFileComplexity assesses the complexity of changes in a file
-func (cbb *Builder) assessFileComplexity(file astparser.FileContext) astparser.ComplexityLevel {
-	symbolCount := len(file.AffectedSymbols)
-	relatedCount := len(file.RelatedFiles)
-
-	if symbolCount > 10 || relatedCount > 20 {
-		return astparser.ComplexityCritical
-	} else if symbolCount > 5 || relatedCount > 10 {
-		return astparser.ComplexityHigh
-	} else if symbolCount > 2 || relatedCount > 5 {
-		return astparser.ComplexityMedium
+func (cbb *Builder) logFlow(msg string, fields ...any) {
+	if cbb.isVerbose {
+		cbb.log.Info(msg, fields...)
 	} else {
-		return astparser.ComplexityLow
+		cbb.log.Debug(msg, fields...)
 	}
-}
-
-// calculateFileImpactScore calculates an impact score for a file
-func (cbb *Builder) calculateFileImpactScore(file astparser.FileContext) float64 {
-	score := 0.0
-
-	// Base score from symbol count
-	score += float64(len(file.AffectedSymbols)) * 2.0
-
-	// Additional score based on symbol types
-	for _, symbol := range file.AffectedSymbols {
-		switch symbol.Type {
-		case astparser.SymbolTypeInterface:
-			score += 5.0
-		case astparser.SymbolTypeClass, astparser.SymbolTypeStruct:
-			score += 3.0
-		case astparser.SymbolTypeFunction, astparser.SymbolTypeMethod:
-			score += 2.0
-		default:
-			score += 1.0
-		}
-
-		// Score for dependencies
-		score += float64(len(symbol.Dependencies)) * 0.5
-	}
-
-	// Score for related files (callers/dependencies)
-	score += float64(len(file.RelatedFiles)) * 0.5
-
-	// Higher score for config files
-	if file.ConfigContext != nil {
-		score += 5.0
-		score += float64(len(file.ConfigContext.ChangedKeys)) * 1.0
-	}
-
-	return score
-}
-
-// compareComplexity compares two complexity levels
-func (cbb *Builder) compareComplexity(a, b astparser.ComplexityLevel) int {
-	levels := map[astparser.ComplexityLevel]int{
-		astparser.ComplexityLow:      1,
-		astparser.ComplexityMedium:   2,
-		astparser.ComplexityHigh:     3,
-		astparser.ComplexityCritical: 4,
-	}
-
-	return levels[a] - levels[b]
-}
-
-// extractFilePathsFromRelated extracts file paths from related files
-func (cbb *Builder) extractFilePathsFromRelated(relatedFiles []astparser.RelatedFile) []string {
-	var paths []string
-	for _, rf := range relatedFiles {
-		paths = append(paths, rf.FilePath)
-	}
-	return paths
-}
-
-// findBrokenReferences finds broken references from related files
-func (cbb *Builder) findBrokenReferences(relatedFiles []astparser.RelatedFile) []astparser.RelatedFile {
-	var broken []astparser.RelatedFile
-	for _, rf := range relatedFiles {
-		if rf.Relationship == "broken_caller" || rf.Relationship == "caller" {
-			broken = append(broken, rf)
-		}
-	}
-	return broken
-}
-
-// assessDeletionImpact assesses the impact of deleting a symbol
-func (cbb *Builder) assessDeletionImpact(symbol astparser.AffectedSymbol, relatedFiles []astparser.RelatedFile) string {
-	brokenCount := len(cbb.findBrokenReferences(relatedFiles))
-
-	if brokenCount == 0 {
-		return "Low impact - no broken references found"
-	} else if brokenCount <= 3 {
-		return fmt.Sprintf("Medium impact - %d references may be broken", brokenCount)
-	} else {
-		return fmt.Sprintf("High impact - %d references may be broken", brokenCount)
-	}
-}
-
-// identifyFileIssues identifies potential issues in a file
-func (cbb *Builder) identifyFileIssues(file astparser.FileContext) []string {
-	var issues []string
-
-	// Large number of symbols affected
-	if len(file.AffectedSymbols) > 10 {
-		issues = append(issues, fmt.Sprintf("Large change in %s - %d symbols affected", file.FilePath, len(file.AffectedSymbols)))
-	}
-
-	// Interface changes
-	for _, symbol := range file.AffectedSymbols {
-		if symbol.Type == astparser.SymbolTypeInterface {
-			issues = append(issues, fmt.Sprintf("Interface %s.%s modified - potential breaking change", file.FilePath, symbol.Name))
-		}
-	}
-
-	// High coupling
-	if len(file.RelatedFiles) > 15 {
-		issues = append(issues, fmt.Sprintf("High coupling in %s - %d related files", file.FilePath, len(file.RelatedFiles)))
-	}
-
-	return issues
-}
-
-// generateChangesSummary generates a summary of changes
-func (cbb *Builder) generateChangesSummary(files []astparser.FileContext, overview OverviewContext) string {
-	var parts []string
-
-	parts = append(parts, fmt.Sprintf("%d files modified with %d symbols affected", overview.TotalFiles, overview.TotalSymbols))
-
-	// Add complexity information
-	parts = append(parts, fmt.Sprintf("Change complexity: %s", overview.ChangeComplexity))
-
-	// Add specific change type information
-	addedCount, modifiedCount, deletedCount := cbb.countChangeTypes(files)
-	if addedCount > 0 {
-		parts = append(parts, fmt.Sprintf("%d files added", addedCount))
-	}
-	if modifiedCount > 0 {
-		parts = append(parts, fmt.Sprintf("%d files modified", modifiedCount))
-	}
-	if deletedCount > 0 {
-		parts = append(parts, fmt.Sprintf("%d files deleted", deletedCount))
-	}
-
-	// Add configuration changes
-	if len(overview.ConfigChanges) > 0 {
-		parts = append(parts, fmt.Sprintf("%d configuration files changed", len(overview.ConfigChanges)))
-	}
-
-	return strings.Join(parts, ". ")
-}
-
-// identifyAffectedAreas identifies affected areas/modules
-func (cbb *Builder) identifyAffectedAreas(files []astparser.FileContext) []string {
-	areaMap := make(map[string]int)
-
-	for _, file := range files {
-		// Extract area from file path (directory structure)
-		dir := filepath.Dir(file.FilePath)
-		if dir != "." {
-			// Use the top-level directory as the area
-			parts := strings.Split(dir, "/")
-			if len(parts) > 0 {
-				area := parts[0]
-				areaMap[area]++
-			}
-		}
-	}
-
-	var areas []string
-	for area, count := range areaMap {
-		areas = append(areas, fmt.Sprintf("%s (%d files)", area, count))
-	}
-
-	return areas
-}
-
-// determineReviewFocus determines what the review should focus on
-func (cbb *Builder) determineReviewFocus(files []astparser.FileContext, overview OverviewContext) []string {
-	var focus []string
-
-	// High-impact changes
-	if len(overview.HighImpactChanges) > 0 {
-		focus = append(focus, "High-impact changes requiring careful review")
-	}
-
-	// Interface changes
-	interfaceChanges := 0
-	for _, file := range files {
-		for _, symbol := range file.AffectedSymbols {
-			if symbol.Type == astparser.SymbolTypeInterface {
-				interfaceChanges++
-			}
-		}
-	}
-	if interfaceChanges > 0 {
-		focus = append(focus, fmt.Sprintf("Interface changes (%d) - check for breaking changes", interfaceChanges))
-	}
-
-	// Configuration changes
-	if len(overview.ConfigChanges) > 0 {
-		focus = append(focus, "Configuration changes - verify impact on dependent systems")
-	}
-
-	// Deleted symbols
-	if len(overview.DeletedSymbols) > 0 {
-		focus = append(focus, "Deleted symbols - check for broken references")
-	}
-
-	// Complex changes
-	if overview.ChangeComplexity == astparser.ComplexityHigh || overview.ChangeComplexity == astparser.ComplexityCritical {
-		focus = append(focus, "Complex changes requiring thorough testing")
-	}
-
-	return focus
-}
-
-// assessRisk assesses the overall risk of the changes
-func (cbb *Builder) assessRisk(overview OverviewContext) RiskAssessment {
-	assessment := RiskAssessment{
-		Level:       RiskLevelLow,
-		Score:       overview.ImpactScore,
-		Factors:     make([]string, 0),
-		Mitigations: make([]string, 0),
-	}
-
-	// Assess risk level based on various factors
-	riskFactors := 0
-
-	if overview.ChangeComplexity == astparser.ComplexityCritical {
-		riskFactors += 3
-		assessment.Factors = append(assessment.Factors, "Critical complexity changes")
-	} else if overview.ChangeComplexity == astparser.ComplexityHigh {
-		riskFactors += 2
-		assessment.Factors = append(assessment.Factors, "High complexity changes")
-	}
-
-	if len(overview.DeletedSymbols) > 0 {
-		riskFactors += 2
-		assessment.Factors = append(assessment.Factors, fmt.Sprintf("%d symbols deleted", len(overview.DeletedSymbols)))
-	}
-
-	if len(overview.ConfigChanges) > 0 {
-		riskFactors += 1
-		assessment.Factors = append(assessment.Factors, "Configuration changes")
-	}
-
-	if overview.ImpactScore > 50 {
-		riskFactors += 2
-		assessment.Factors = append(assessment.Factors, "High impact score")
-	}
-
-	// Determine risk level
-	if riskFactors >= 5 {
-		assessment.Level = RiskLevelCritical
-	} else if riskFactors >= 3 {
-		assessment.Level = RiskLevelHigh
-	} else if riskFactors >= 1 {
-		assessment.Level = RiskLevelMedium
-	}
-
-	// Generate mitigations
-	assessment.Mitigations = cbb.generateMitigations(assessment.Level, assessment.Factors)
-
-	return assessment
-}
-
-// generateRecommendations generates recommendations for the review
-func (cbb *Builder) generateRecommendations(files []astparser.FileContext, overview OverviewContext) []string {
-	var recommendations []string
-
-	// Based on complexity
-	if overview.ChangeComplexity == astparser.ComplexityCritical {
-		recommendations = append(recommendations, "Consider breaking this large change into smaller, more focused changes")
-	}
-
-	// Based on deleted symbols
-	if len(overview.DeletedSymbols) > 0 {
-		recommendations = append(recommendations, "Verify that all references to deleted symbols have been properly updated")
-	}
-
-	// Based on configuration changes
-	if len(overview.ConfigChanges) > 0 {
-		recommendations = append(recommendations, "Update documentation to reflect configuration changes")
-		recommendations = append(recommendations, "Consider backwards compatibility for configuration changes")
-	}
-
-	// Based on interface changes
-	interfaceCount := 0
-	for _, file := range files {
-		for _, symbol := range file.AffectedSymbols {
-			if symbol.Type == astparser.SymbolTypeInterface {
-				interfaceCount++
-			}
-		}
-	}
-	if interfaceCount > 0 {
-		recommendations = append(recommendations, "Review interface changes for backwards compatibility")
-		recommendations = append(recommendations, "Update API documentation if public interfaces changed")
-	}
-
-	// General recommendations
-	if overview.TotalSymbols > 20 {
-		recommendations = append(recommendations, "Ensure comprehensive test coverage for the large number of changes")
-	}
-
-	return recommendations
-}
-
-// generateMitigations generates risk mitigations
-func (cbb *Builder) generateMitigations(level RiskLevel, factors []string) []string {
-	var mitigations []string
-
-	switch level {
-	case RiskLevelCritical:
-		mitigations = append(mitigations, "Require multiple reviewers")
-		mitigations = append(mitigations, "Perform comprehensive testing")
-		mitigations = append(mitigations, "Consider staged deployment")
-		mitigations = append(mitigations, "Prepare rollback plan")
-
-	case RiskLevelHigh:
-		mitigations = append(mitigations, "Require thorough review")
-		mitigations = append(mitigations, "Ensure test coverage")
-		mitigations = append(mitigations, "Test in staging environment")
-
-	case RiskLevelMedium:
-		mitigations = append(mitigations, "Standard review process")
-		mitigations = append(mitigations, "Verify test coverage")
-
-	case RiskLevelLow:
-		mitigations = append(mitigations, "Standard review")
-	}
-
-	// Factor-specific mitigations
-	for _, factor := range factors {
-		if strings.Contains(factor, "deleted") {
-			mitigations = append(mitigations, "Run static analysis to find orphaned references")
-		}
-		if strings.Contains(factor, "Configuration") {
-			mitigations = append(mitigations, "Test configuration changes in isolated environment")
-		}
-	}
-
-	return mitigations
-}
-
-// countChangeTypes counts different types of changes
-func (cbb *Builder) countChangeTypes(files []astparser.FileContext) (added, modified, deleted int) {
-	for _, file := range files {
-		switch file.ChangeType {
-		case astparser.ChangeTypeAdded:
-			added++
-		case astparser.ChangeTypeModified, astparser.ChangeTypeRenamed:
-			modified++
-		case astparser.ChangeTypeDeleted:
-			deleted++
-		}
-	}
-	return
-}
-
-// extractPackageFromPath extracts package name from file path
-func (cbb *Builder) extractPackageFromPath(filePath string) string {
-	dir := filepath.Dir(filePath)
-	if dir == "." {
-		return "main"
-	}
-
-	parts := strings.Split(dir, "/")
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
-	}
-
-	return "unknown"
 }

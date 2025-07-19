@@ -15,7 +15,7 @@ import (
 
 	"github.com/maxbolgarin/codry/internal/model"
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 	"github.com/maxbolgarin/logze/v2"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
@@ -37,7 +37,7 @@ type Provider struct {
 // New creates a new GitLab provider
 func New(config model.ProviderConfig) (*Provider, error) {
 	if config.Token == "" {
-		return nil, errm.New("GitLab token is required")
+		return nil, erro.New("GitLab token is required")
 	}
 	logger := logze.With("provider", "gitlab", "component", "provider")
 
@@ -48,7 +48,7 @@ func New(config model.ProviderConfig) (*Provider, error) {
 
 	client, err := gitlab.NewClient(config.Token, gitlab.WithBaseURL(baseURL))
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to create GitLab client")
+		return nil, erro.Wrap(err, "failed to create GitLab client")
 	}
 
 	return &Provider{
@@ -65,7 +65,7 @@ func (p *Provider) ValidateWebhook(payload []byte, signature string) error {
 	}
 
 	if signature != p.config.WebhookSecret {
-		return errm.New("invalid webhook signature")
+		return erro.New("invalid webhook signature")
 	}
 
 	return nil
@@ -75,7 +75,7 @@ func (p *Provider) ValidateWebhook(payload []byte, signature string) error {
 func (p *Provider) ParseWebhookEvent(payload []byte) (*model.CodeEvent, error) {
 	var gitlabPayload gitlabPayload
 	if err := json.Unmarshal(payload, &gitlabPayload); err != nil {
-		return nil, errm.Wrap(err, "failed to parse GitLab webhook payload")
+		return nil, erro.Wrap(err, "failed to parse GitLab webhook payload")
 	}
 
 	// Convert reviewers from webhook payload
@@ -118,16 +118,16 @@ func (p *Provider) ParseWebhookEvent(payload []byte) (*model.CodeEvent, error) {
 func (p *Provider) GetMergeRequest(ctx context.Context, projectID string, mrIID int) (*model.MergeRequest, error) {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
-		return nil, errm.Wrap(err, "invalid project ID")
+		return nil, erro.Wrap(err, "invalid project ID")
 	}
 
 	mr, resp, err := p.client.MergeRequests.GetMergeRequest(projectIDInt, mrIID, nil)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get merge request from GitLab")
+		return nil, erro.Wrap(err, "failed to get merge request from GitLab")
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, errm.New(fmt.Sprintf("GitLab API returned status %d", resp.StatusCode))
+		return nil, erro.New(fmt.Sprintf("GitLab API returned status %d", resp.StatusCode))
 	}
 
 	// Convert reviewers
@@ -165,7 +165,7 @@ func (p *Provider) GetMergeRequest(ctx context.Context, projectID string, mrIID 
 func (p *Provider) GetMergeRequestDiffs(ctx context.Context, projectID string, mrIID int) ([]*model.FileDiff, error) {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
-		return nil, errm.Wrap(err, "invalid project ID")
+		return nil, erro.Wrap(err, "invalid project ID")
 	}
 
 	var allDiffs []*gitlab.MergeRequestDiff
@@ -181,11 +181,11 @@ func (p *Provider) GetMergeRequestDiffs(ctx context.Context, projectID string, m
 
 		diffs, resp, err := p.client.MergeRequests.ListMergeRequestDiffs(projectIDInt, mrIID, opts)
 		if err != nil {
-			return nil, errm.Wrap(err, "failed to list merge request diffs")
+			return nil, erro.Wrap(err, "failed to list merge request diffs")
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, errm.New(fmt.Sprintf("GitLab API returned status %d", resp.StatusCode))
+			return nil, erro.New(fmt.Sprintf("GitLab API returned status %d", resp.StatusCode))
 		}
 
 		allDiffs = append(allDiffs, diffs...)
@@ -218,7 +218,7 @@ func (p *Provider) GetMergeRequestDiffs(ctx context.Context, projectID string, m
 func (p *Provider) UpdateMergeRequestDescription(ctx context.Context, projectID string, mrIID int, description string) error {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
-		return errm.Wrap(err, "invalid project ID")
+		return erro.Wrap(err, "invalid project ID")
 	}
 
 	updateOpts := &gitlab.UpdateMergeRequestOptions{
@@ -227,7 +227,7 @@ func (p *Provider) UpdateMergeRequestDescription(ctx context.Context, projectID 
 
 	_, _, err = p.client.MergeRequests.UpdateMergeRequest(projectIDInt, mrIID, updateOpts)
 	if err != nil {
-		return errm.Wrap(err, "failed to update merge request description")
+		return erro.Wrap(err, "failed to update merge request description")
 	}
 
 	return nil
@@ -237,7 +237,7 @@ func (p *Provider) UpdateMergeRequestDescription(ctx context.Context, projectID 
 func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID int, comment *model.Comment) error {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
-		return errm.Wrap(err, "invalid project ID")
+		return erro.Wrap(err, "invalid project ID")
 	}
 
 	// Check if this is a line-specific comment
@@ -276,7 +276,7 @@ func (p *Provider) CreateComment(ctx context.Context, projectID string, mrIID in
 
 		discussion, _, err := p.client.Discussions.CreateMergeRequestDiscussion(projectIDInt, mrIID, discussionOpts)
 		if err != nil {
-			return errm.Wrap(err, "failed to create merge request discussion")
+			return erro.Wrap(err, "failed to create merge request discussion")
 		}
 
 		comment.ID = discussion.ID
@@ -295,7 +295,7 @@ func (p *Provider) createRegularComment(projectID int, mrIID int, comment *model
 
 	discussion, _, err := p.client.Discussions.CreateMergeRequestDiscussion(projectID, mrIID, discussionOpts)
 	if err != nil {
-		return errm.Wrap(err, "failed to create merge request discussion")
+		return erro.Wrap(err, "failed to create merge request discussion")
 	}
 
 	comment.ID = discussion.ID
@@ -306,7 +306,7 @@ func (p *Provider) createRegularComment(projectID int, mrIID int, comment *model
 func (p *Provider) ListMergeRequests(ctx context.Context, projectID string, filter *model.MergeRequestFilter) ([]*model.MergeRequest, error) {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
-		return nil, errm.Wrap(err, "invalid project ID")
+		return nil, erro.Wrap(err, "invalid project ID")
 	}
 
 	opts := &gitlab.ListProjectMergeRequestsOptions{
@@ -347,7 +347,7 @@ func (p *Provider) ListMergeRequests(ctx context.Context, projectID string, filt
 
 	mrs, _, err := p.client.MergeRequests.ListProjectMergeRequests(projectIDInt, opts)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to list merge requests")
+		return nil, erro.Wrap(err, "failed to list merge requests")
 	}
 
 	var result []*model.MergeRequest
@@ -486,7 +486,7 @@ func (p *Provider) extractLineRange(body string) (int, int) {
 func (p *Provider) GetFileContent(ctx context.Context, projectID, filePath, commitSHA string) (string, error) {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
-		return "", errm.Wrap(err, "invalid project ID")
+		return "", erro.Wrap(err, "invalid project ID")
 	}
 
 	// Get file content at specific commit
@@ -496,15 +496,15 @@ func (p *Provider) GetFileContent(ctx context.Context, projectID, filePath, comm
 
 	file, resp, err := p.client.RepositoryFiles.GetFile(projectIDInt, filePath, fileOpts)
 	if err != nil {
-		return "", errm.Wrap(err, "failed to get file content from GitLab")
+		return "", erro.Wrap(err, "failed to get file content from GitLab")
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", errm.New("GitLab API returned status %d", resp.StatusCode)
+		return "", erro.New("GitLab API returned status %d", resp.StatusCode)
 	}
 
 	if file == nil {
-		return "", errm.New("file content is nil")
+		return "", erro.New("file content is nil")
 	}
 
 	return file.Content, nil
@@ -514,13 +514,13 @@ func (p *Provider) GetFileContent(ctx context.Context, projectID, filePath, comm
 func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int) ([]*model.Comment, error) {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
-		return nil, errm.Wrap(err, "invalid project ID")
+		return nil, erro.Wrap(err, "invalid project ID")
 	}
 
 	// Get all discussions for the merge request
 	discussions, _, err := p.client.Discussions.ListMergeRequestDiscussions(projectIDInt, mrIID, nil)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get discussions from GitLab")
+		return nil, erro.Wrap(err, "failed to get discussions from GitLab")
 	}
 
 	var allComments []*model.Comment
@@ -561,13 +561,13 @@ func (p *Provider) GetComments(ctx context.Context, projectID string, mrIID int)
 func (p *Provider) GetMergeRequestCommits(ctx context.Context, projectID string, mrIID int) ([]*model.Commit, error) {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
-		return nil, errm.Wrap(err, "invalid project ID")
+		return nil, erro.Wrap(err, "invalid project ID")
 	}
 
 	// Get all commits for the merge request
 	commits, _, err := p.client.MergeRequests.GetMergeRequestCommits(projectIDInt, mrIID, nil)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get merge request commits from GitLab")
+		return nil, erro.Wrap(err, "failed to get merge request commits from GitLab")
 	}
 
 	// Convert to our model
@@ -584,13 +584,13 @@ func (p *Provider) GetMergeRequestCommits(ctx context.Context, projectID string,
 func (p *Provider) GetCommitDetails(ctx context.Context, projectID, commitSHA string) (*model.Commit, error) {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
-		return nil, errm.Wrap(err, "invalid project ID")
+		return nil, erro.Wrap(err, "invalid project ID")
 	}
 
 	// Get commit details
 	commit, _, err := p.client.Commits.GetCommit(projectIDInt, commitSHA, nil)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get commit details from GitLab")
+		return nil, erro.Wrap(err, "failed to get commit details from GitLab")
 	}
 
 	return p.convertGitLabCommit(commit), nil
@@ -600,13 +600,13 @@ func (p *Provider) GetCommitDetails(ctx context.Context, projectID, commitSHA st
 func (p *Provider) GetCommitDiffs(ctx context.Context, projectID, commitSHA string) ([]*model.FileDiff, error) {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
-		return nil, errm.Wrap(err, "invalid project ID")
+		return nil, erro.Wrap(err, "invalid project ID")
 	}
 
 	// Get commit diff
 	diffs, _, err := p.client.Commits.GetCommitDiff(projectIDInt, commitSHA, nil)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get commit diff from GitLab")
+		return nil, erro.Wrap(err, "failed to get commit diff from GitLab")
 	}
 
 	// Convert to our model
@@ -692,13 +692,13 @@ func (p *Provider) parseCommitMessage(message string, commit *model.Commit) {
 func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID int, commentID string, newBody string) error {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
-		return errm.Wrap(err, "invalid project ID")
+		return erro.Wrap(err, "invalid project ID")
 	}
 
 	// Get all discussions to find the one containing this comment
 	discussions, _, err := p.client.Discussions.ListMergeRequestDiscussions(projectIDInt, mrIID, nil)
 	if err != nil {
-		return errm.Wrap(err, "failed to get discussions from GitLab")
+		return erro.Wrap(err, "failed to get discussions from GitLab")
 	}
 
 	var discussionID string
@@ -721,7 +721,7 @@ func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID in
 	}
 
 	if !found {
-		return errm.New("comment not found")
+		return erro.New("comment not found")
 	}
 
 	// Update the note
@@ -731,7 +731,7 @@ func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID in
 
 	_, _, err = p.client.Discussions.UpdateMergeRequestDiscussionNote(projectIDInt, mrIID, discussionID, noteID, updateOpts)
 	if err != nil {
-		return errm.Wrap(err, "failed to update comment")
+		return erro.Wrap(err, "failed to update comment")
 	}
 
 	return nil
@@ -741,19 +741,19 @@ func (p *Provider) UpdateComment(ctx context.Context, projectID string, mrIID in
 func (p *Provider) GetRepositoryInfo(ctx context.Context, projectID string) (*model.RepositoryInfo, error) {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
-		return nil, errm.Wrap(err, "invalid project ID")
+		return nil, erro.Wrap(err, "invalid project ID")
 	}
 
 	// Get project details
 	project, _, err := p.client.Projects.GetProject(projectIDInt, nil)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get project from GitLab")
+		return nil, erro.Wrap(err, "failed to get project from GitLab")
 	}
 
 	// Get branches
 	branches, _, err := p.client.Branches.ListBranches(projectIDInt, nil)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get branches from GitLab")
+		return nil, erro.Wrap(err, "failed to get branches from GitLab")
 	}
 
 	// Convert branches
@@ -811,13 +811,13 @@ func (p *Provider) GetRepositoryInfo(ctx context.Context, projectID string) (*mo
 func (p *Provider) GetRepositorySnapshot(ctx context.Context, projectID, commitSHA string) (*model.RepositorySnapshot, error) {
 	projectIDInt, err := strconv.Atoi(projectID)
 	if err != nil {
-		return nil, errm.Wrap(err, "invalid project ID")
+		return nil, erro.Wrap(err, "invalid project ID")
 	}
 
 	// Get commit details for timestamp
 	commit, _, err := p.client.Commits.GetCommit(projectIDInt, commitSHA, nil)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to get commit details")
+		return nil, erro.Wrap(err, "failed to get commit details")
 	}
 
 	// Get repository tree recursively
@@ -837,7 +837,7 @@ func (p *Provider) GetRepositorySnapshot(ctx context.Context, projectID, commitS
 		treeOpts.Page = page
 		treeNodes, resp, err := p.client.Repositories.ListTree(projectIDInt, treeOpts)
 		if err != nil {
-			return nil, errm.Wrap(err, "failed to get repository tree")
+			return nil, erro.Wrap(err, "failed to get repository tree")
 		}
 
 		allTreeNodes = append(allTreeNodes, treeNodes...)

@@ -8,109 +8,113 @@ import (
 
 	"github.com/maxbolgarin/codry/internal/agent/prompts"
 	"github.com/maxbolgarin/codry/internal/model"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/codry/internal/reviewer/llmcontext"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/lang"
 	"github.com/maxbolgarin/logze/v2"
 )
 
 func (s *Reviewer) generateCodeReview(ctx context.Context, bundle *reviewBundle) {
 	if !s.cfg.Generate.CodeReview {
-		s.logFlow("code review is disabled, skipping")
+		s.logFlow(bundle.log, "code review is disabled, skipping")
 		return
 	}
-	s.logFlow("generating code review")
+	s.logFlow(bundle.log, "generating code review")
 
-	for _, change := range bundle.filesToReview {
+	for _, change := range bundle.request.Context.FilesForReview {
 		if err := s.reviewCodeChanges(ctx, bundle, change); err != nil {
 			msg := "failed to perform basic review"
 			bundle.log.Err(err, msg)
 			if strings.Contains(err.Error(), "context canceled") {
 				return
 			}
-			bundle.result.Errors = append(bundle.result.Errors, errm.Wrap(err, msg))
+			bundle.result.Errors = append(bundle.result.Errors, erro.Wrap(err, msg))
 		}
 	}
 
-	s.logFlow("finished code review")
+	s.logFlow(bundle.log, "finished code review")
 
 	bundle.result.IsCodeReviewCreated = true
 }
 
 // reviewCodeChanges reviews individual files and creates comments
-func (s *Reviewer) reviewCodeChanges(ctx context.Context, bundle *reviewBundle, change *model.FileDiff) error {
+func (s *Reviewer) reviewCodeChanges(ctx context.Context, bundle *reviewBundle, change *llmcontext.FileContext) error {
 	// Guard old path
-	change.OldPath = lang.Check(change.OldPath, change.NewPath)
+	change.Diff.OldPath = lang.Check(change.Diff.OldPath, change.Diff.NewPath)
 
-	fileHash := s.getFileHash(change.Diff)
-	if oldHash, ok := s.processedMRs.Lookup(bundle.request.String(), change.NewPath); ok {
-		if oldHash == fileHash {
-			bundle.log.DebugIf(s.cfg.Verbose, "skipping already reviewed", "file", change.NewPath)
-			return nil
-		}
-	}
+	s.logFlow(bundle.log, "performing review", "file", change.Diff.NewPath)
 
-	s.logFlow("performing review", "file", change.NewPath)
-
-	reviewResult, err := s.performBasicReview(ctx, bundle.request, change, bundle.log)
+	reviewResult, err := s.performContextAwareReview(ctx, bundle.request, change, bundle.log)
 	if err != nil {
 		return err
 	}
 
 	// Skip if no issues found
 	if reviewResult == nil || !reviewResult.HasIssues || len(reviewResult.Comments) == 0 {
-		bundle.log.DebugIf(s.cfg.Verbose, "no issues found", "file", change.NewPath)
-		s.processedMRs.Set(bundle.request.String(), change.NewPath, fileHash)
+		bundle.log.DebugIf(s.cfg.Verbose, "no issues found", "file", change.Diff.NewPath)
 		return nil
 	}
 
 	commentsCreated := s.processReviewResults(ctx, bundle.request, change, reviewResult, bundle.log)
 	bundle.result.CommentsCreated += commentsCreated
-	s.processedMRs.Set(bundle.request.String(), change.NewPath, fileHash)
 
-	s.logFlow("reviewed successfully", "file", change.NewPath, "comments", len(reviewResult.Comments))
+	s.logFlow(bundle.log, "reviewed successfully",
+		"file", change.Diff.NewPath,
+		"comments", len(reviewResult.Comments),
+	)
 
 	return nil
 }
 
 // performBasicReview performs basic review without enhanced context (fallback)
-func (s *Reviewer) performBasicReview(ctx context.Context, request model.ReviewRequest, change *model.FileDiff, log logze.Logger) (*model.FileReviewResult, error) {
-	fullFileContent, cleanDiff, err := s.prepareFileContentAndDiff(ctx, request, change, log)
+func (s *Reviewer) performBasicReview(ctx context.Context, request ReviewRequest, change *llmcontext.FileContext, log logze.Logger) (*model.FileReviewResult, error) {
+	fullFileContent, cleanDiff, err := s.prepareFileContentAndDiff(ctx, request, change.Diff, log)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to prepare file content and diff")
+		return nil, erro.Wrap(err, "failed to prepare file content and diff")
 	}
-	return s.agent.ReviewCode(ctx, change.NewPath, fullFileContent, cleanDiff)
+	return s.agent.ReviewCode(ctx, change.Diff.NewPath, cleanDiff, fullFileContent)
+}
+
+// performContextAwareReview performs enhanced review with rich context when available, falls back to basic review
+func (s *Reviewer) performContextAwareReview(ctx context.Context, request ReviewRequest, change *llmcontext.FileContext, log logze.Logger) (*model.FileReviewResult, error) {
+	// Generate clean diff with logical grouping
+	cleanDiff, err := s.parser.GenerateCleanDiff(change.Diff.Diff)
+	if err != nil {
+		return nil, erro.Wrap(err, "failed to generate clean diff")
+	}
+	return s.agent.ReviewCodeWithContext(ctx, change.Diff.NewPath, cleanDiff, change.Context, request.Context.MR)
 }
 
 // processReviewResults processes the review results and creates comments
-func (s *Reviewer) processReviewResults(ctx context.Context, request model.ReviewRequest, change *model.FileDiff, reviewResult *model.FileReviewResult, log logze.Logger) int {
+func (s *Reviewer) processReviewResults(ctx context.Context, request ReviewRequest, change *llmcontext.FileContext, reviewResult *model.FileReviewResult, log logze.Logger) int {
 	commentsCreated := 0
 
 	// Enhance comments with diff position information and set programming language
-	if err := s.parser.EnhanceReviewComments(change.Diff, reviewResult.Comments); err != nil {
+	if err := s.parser.EnhanceReviewComments(change.Diff.Diff, reviewResult.Comments); err != nil {
 		log.Warn("failed to enhance comments with diff positions", "error", err)
 	}
 
 	// Set programming language for each comment if not already set
-	detectedLanguage := detectProgrammingLanguage(change.NewPath)
+	detectedLanguage := detectProgrammingLanguage(change.Diff.NewPath)
 	for _, comment := range reviewResult.Comments {
 		comment.CodeLanguage = lang.Check(comment.CodeLanguage, detectedLanguage)
 	}
 
 	// Score and filter comments based on scoring mode
-	filteredComments := s.scoreAndFilterComments(ctx, reviewResult.Comments, change, log)
+	filteredComments := s.scoreAndFilterComments(ctx, reviewResult.Comments, change.Diff, log)
 
 	// Create line-specific comments
 	for _, reviewComment := range filteredComments {
 		// Ensure file path is set (AI might not include it in JSON response)
 		if reviewComment.FilePath == "" {
-			reviewComment.FilePath = change.NewPath
+			reviewComment.FilePath = change.Diff.NewPath
 		}
 
 		comment := buildComment(s.cfg.Language, reviewComment)
 
-		err := s.provider.CreateComment(ctx, request.ProjectID, request.MergeRequest.IID, comment)
+		err := s.provider.CreateComment(ctx, request.ProjectID, request.Context.MR.IID, comment)
 		if err != nil {
-			log.Error("failed to create comment", "error", err, "file", change.NewPath, "line", reviewComment.Line)
+			log.Error("failed to create comment", "error", err, "file", change.Diff.NewPath, "line", reviewComment.Line)
 			continue
 		}
 
@@ -118,7 +122,7 @@ func (s *Reviewer) processReviewResults(ctx context.Context, request model.Revie
 
 		log.DebugIf(s.cfg.Verbose,
 			"created comment",
-			"file", change.NewPath,
+			"file", change.Diff.NewPath,
 			"line", reviewComment.Line,
 			"type", reviewComment.IssueType,
 			"impact", reviewComment.IssueImpact,
@@ -129,23 +133,23 @@ func (s *Reviewer) processReviewResults(ctx context.Context, request model.Revie
 	// Log filtering results if scoring was used
 	if len(reviewResult.Comments) > len(filteredComments) {
 		filteredCount := len(reviewResult.Comments) - len(filteredComments)
-		s.logFlow("filtered low-quality comments",
+		s.logFlow(log, "filtered low-quality comments",
 			"total_comments", len(reviewResult.Comments),
 			"filtered_count", filteredCount,
 			"final_count", len(filteredComments),
 			"scoring_mode", string(s.cfg.Scoring.Mode),
-			"file", change.NewPath)
+			"file", change.Diff.NewPath)
 	}
 
 	return commentsCreated
 }
 
 // prepareFileContentAndDiff gets the original file content (before changes) and clean diff format
-func (s *Reviewer) prepareFileContentAndDiff(ctx context.Context, request model.ReviewRequest, change *model.FileDiff, log logze.Logger) (string, string, error) {
+func (s *Reviewer) prepareFileContentAndDiff(ctx context.Context, request ReviewRequest, change *model.FileDiff, log logze.Logger) (string, string, error) {
 	// Generate clean diff with logical grouping
 	cleanDiff, err := s.parser.GenerateCleanDiff(change.Diff)
 	if err != nil {
-		return "", "", errm.Wrap(err, "failed to generate clean diff")
+		return "", "", erro.Wrap(err, "failed to generate clean diff")
 	}
 
 	// Handle new files - no original content exists
@@ -174,11 +178,11 @@ func (s *Reviewer) prepareFileContentAndDiff(ctx context.Context, request model.
 }
 
 // getOriginalFileContent retrieves the original file content before changes
-func (s *Reviewer) getOriginalFileContent(ctx context.Context, request model.ReviewRequest, filePath string, log logze.Logger) (string, error) {
+func (s *Reviewer) getOriginalFileContent(ctx context.Context, request ReviewRequest, filePath string, log logze.Logger) (string, error) {
 	// Try to get the file content from the target branch (base branch)
 	// This represents the "before" state that changes are being applied to
-	if request.MergeRequest.TargetBranch != "" {
-		content, err := s.provider.GetFileContent(ctx, request.ProjectID, filePath, request.MergeRequest.TargetBranch)
+	if request.Context.MR.TargetBranch != "" {
+		content, err := s.provider.GetFileContent(ctx, request.ProjectID, filePath, request.Context.MR.TargetBranch)
 		if err == nil {
 			return content, nil
 		}
@@ -187,16 +191,16 @@ func (s *Reviewer) getOriginalFileContent(ctx context.Context, request model.Rev
 
 	// Fallback: try to get from source commit (this will be the "after" state, but better than nothing)
 	// In a proper implementation, we'd want to get the parent commit of the source branch
-	if request.MergeRequest.SHA != "" {
-		content, err := s.provider.GetFileContent(ctx, request.ProjectID, filePath, request.MergeRequest.SHA)
+	if request.Context.MR.SHA != "" {
+		content, err := s.provider.GetFileContent(ctx, request.ProjectID, filePath, request.Context.MR.SHA)
 		if err != nil {
-			return "", errm.Wrap(err, "failed to get file content from any source")
+			return "", erro.Wrap(err, "failed to get file content from any source")
 		}
 		log.Warn("using source commit content as fallback - this may include some changes")
 		return content, nil
 	}
 
-	return "", errm.New("no valid commit reference available")
+	return "", erro.New("no valid commit reference available")
 }
 
 // Helper methods for tracking processed MRs and files

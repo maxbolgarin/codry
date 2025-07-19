@@ -248,7 +248,6 @@ Provide solutions that a senior developer would implement in production - clean,
 var structuredReviewUserPromptTemplate = `
 As a world-class software architect, perform a comprehensive analysis of the following code changes. Think beyond surface-level observations to identify critical issues that could impact system reliability, security, performance, or maintainability.
 
-%s
 
 ANALYSIS FRAMEWORK:
 
@@ -257,30 +256,35 @@ ANALYSIS FRAMEWORK:
 - How do these changes affect data flow and system behavior?
 - What are the hidden implications and side effects?
 - Are there subtle logic errors or edge cases being introduced?
+- How do the affected symbols impact the overall system?
 
 🏗️ **ARCHITECTURAL REVIEW**:
 - How do these changes affect system coupling and cohesion?
 - Are there violations of SOLID principles or clean architecture?
 - Do the changes introduce technical debt or architectural drift?
 - Are there better design patterns that should be applied?
+- How do the changes affect related files and dependencies?
 
 🔒 **SECURITY ANALYSIS**:
 - Could these changes introduce security vulnerabilities?
 - Are there potential injection points or data exposure risks?
 - Is input validation comprehensive and secure?
 - Are authentication/authorization properly handled?
+- Do the symbol changes affect security boundaries?
 
 ⚡ **PERFORMANCE & SCALABILITY**:
 - Are there performance bottlenecks or inefficient algorithms?
 - Could these changes cause memory leaks or resource issues?
 - Are there N+1 query problems or blocking I/O operations?
 - How will these changes scale under load?
+- Do the affected symbols have performance implications?
 
 🛡️ **ERROR HANDLING & RELIABILITY**:
 - Is error handling comprehensive and appropriate?
 - Are all failure scenarios properly considered?
 - Is resource cleanup handled correctly?
 - Are there potential race conditions or concurrency issues?
+- How do changes affect error propagation in dependent code?
 
 UNDERSTANDING THE DIFF FORMAT:
 The diff shows actual changes with explicit line numbers:
@@ -291,21 +295,31 @@ The diff shows actual changes with explicit line numbers:
 CONTEXT PROVIDED:
 File name: %s
 
-ORIGINAL FILE CONTENT (complete context for understanding):
----
-%s
----
 
 CHANGES MADE (with line numbers):
----
+<code_changes>
 %s
----
+</code_changes>
+
+
+DETAILED CONTEXT ABOUT CHANGES SYMBOLS, THEIR USAGE AND DEPENDENCIES:
+<changes_context>
+%s
+</changes_context>
+
+
+GLOBAL CONTEXT ABOUT THE MERGE REQUEST:
+<merge_request_context>
+%s
+</merge_request_context>
+
 
 EXPERT ANALYSIS INSTRUCTIONS:
 1. **ROOT CAUSE ANALYSIS**: For each issue, identify the underlying cause, not just the symptom
-2. **ELEGANT SOLUTIONS**: Provide clean, maintainable solutions that follow industry best practices
-3. **COMPLETE CODE**: Ensure code snippets are production-ready with proper error handling
-4. **ARCHITECTURAL THINKING**: Consider how changes fit into the larger system design
+2. **CONTEXT-AWARE SOLUTIONS**: Use the provided context to understand impact on related files and systems
+3. **ELEGANT SOLUTIONS**: Provide clean, maintainable solutions that follow industry best practices
+4. **COMPLETE CODE**: Ensure code snippets are production-ready with proper error handling
+5. **ARCHITECTURAL THINKING**: Consider how changes fit into the larger system design and affect related components
 
 SOLUTION QUALITY STANDARDS:
 - Solutions should be CLEAN and follow SOLID principles
@@ -314,6 +328,7 @@ SOLUTION QUALITY STANDARDS:
 - Ensure solutions are testable and maintainable
 - Follow modern coding standards and best practices
 - Write short but informative description that everybody would read and understand
+- Consider impact on related files and dependent code
 
 OUTPUT FORMAT: Respond with a valid JSON object:
 {

@@ -6,7 +6,7 @@ import (
 
 	"github.com/maxbolgarin/codry/internal/model/interfaces"
 	"github.com/maxbolgarin/codry/internal/reviewer"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/logze/v2"
 	"github.com/maxbolgarin/servex/v2"
 )
@@ -23,7 +23,7 @@ type Server struct {
 // New creates a new webhook handler
 func New(cfg Config, provider interfaces.CodeProvider, reviewer *reviewer.Reviewer) (*Server, error) {
 	if err := cfg.PrepareAndValidate(); err != nil {
-		return nil, errm.Wrap(err, "validate config")
+		return nil, erro.Wrap(err, "validate config")
 	}
 
 	log := logze.With("module", "server")
@@ -37,7 +37,7 @@ func New(cfg Config, provider interfaces.CodeProvider, reviewer *reviewer.Review
 		servex.WithCertificate(cfg.Certificate),
 	)
 	if err != nil {
-		return nil, errm.Wrap(err, "failed to create server")
+		return nil, erro.Wrap(err, "failed to create server")
 	}
 
 	h := &Server{

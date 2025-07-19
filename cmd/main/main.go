@@ -4,7 +4,7 @@ import (
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/maxbolgarin/codry/internal/app"
 	"github.com/maxbolgarin/contem"
-	"github.com/maxbolgarin/errm"
+	"github.com/maxbolgarin/erro"
 	"github.com/maxbolgarin/logze/v2"
 )
 
@@ -31,16 +31,18 @@ func main() {
 func run(ctx contem.Context) error {
 	cfg, err := app.LoadConfig(*configPath)
 	if err != nil {
-		return errm.Wrap(err, "load config")
+		return erro.Wrap(err, "load config")
 	}
 	logze.Init(logze.C().WithConsole().WithLevel(logze.LevelDebug))
 
 	codry, err := app.New(ctx, cfg)
 	if err != nil {
-		return errm.Wrap(err, "new provider")
+		return erro.Wrap(err, "new provider")
 	}
 
-	codry.RunReview(ctx, "maxbolgarin/codry")
+	if err := codry.RunReview(ctx, "maxbolgarin/codry"); err != nil {
+		return erro.Wrap(err, "run review")
+	}
 
 	return nil
 }

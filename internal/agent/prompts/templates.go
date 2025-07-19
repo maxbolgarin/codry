@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/maxbolgarin/codry/internal/model"
+	"github.com/maxbolgarin/codry/internal/reviewer/astparser"
+	"github.com/maxbolgarin/codry/internal/reviewer/llmcontext"
 )
 
 // EnhancedContext contains rich context information for code analysis (local copy to avoid circular imports)
@@ -144,13 +146,32 @@ func (tb *Builder) BuildArchitectureReviewPrompt(diff string) model.Prompt {
 }
 
 // BuildReviewPrompt creates a prompt for structured code review with full file content and clean diff (legacy method)
-func (tb *Builder) BuildReviewPrompt(filename, fullFileContent, cleanDiff string) model.Prompt {
+func (tb *Builder) BuildReviewPrompWithFullFileContent(filename, fileDiffString, fullFileContent string) model.Prompt {
 	systemPrompt := fmt.Sprintf(reviewSystemPromptTemplate, tb.language.Instructions)
+
 	userPrompt := fmt.Sprintf(structuredReviewUserPromptTemplate,
-		"", // No additional context
 		filename,
-		fullFileContent,
-		cleanDiff,
+		fileDiffString,
+		"GOT ALL FILE CONTENT EXCEPT CONTEXT\n\n```"+fullFileContent+"```",
+		"NOT_AVAILABLE, SKIP",
+	)
+
+	return model.Prompt{
+		SystemPrompt: systemPrompt,
+		UserPrompt:   userPrompt,
+		Language:     tb.language.Language,
+	}
+}
+
+// BuildReviewPrompt creates a prompt for structured code review with full file content and clean diff (legacy method)
+func (tb *Builder) BuildReviewPromptWithContext(filename, fileDiffString string, fileContext *astparser.FileContext, mrContext *llmcontext.MRContext) model.Prompt {
+	systemPrompt := fmt.Sprintf(reviewSystemPromptTemplate, tb.language.Instructions)
+
+	userPrompt := fmt.Sprintf(structuredReviewUserPromptTemplate,
+		filename,
+		fileDiffString,
+		fileContext.String(),
+		mrContext.BuildContextSummary(),
 	)
 
 	return model.Prompt{

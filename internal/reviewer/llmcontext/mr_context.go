@@ -1,263 +1,15 @@
 package llmcontext
 
 import (
-	"context"
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/maxbolgarin/codry/internal/model"
-	"github.com/maxbolgarin/codry/internal/model/interfaces"
-	"github.com/maxbolgarin/errm"
 	"github.com/maxbolgarin/logze/v2"
 )
-
-// MRContext holds comprehensive metadata about a merge request
-type MRContext struct {
-	// Basic MR information
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	BranchName  string    `json:"branch_name"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-
-	// Author information
-	Author         model.User       `json:"author"`
-	AuthorComments []*model.Comment `json:"author_comments"`
-
-	// Commit information
-	Commits []CommitInfo `json:"commits"`
-
-	// Issue/ticket links
-	LinkedIssues  []LinkedIssue  `json:"linked_issues"`
-	LinkedTickets []LinkedTicket `json:"linked_tickets"`
-
-	// File changes
-	FileDiffs []*model.FileDiff       `json:"file_diffs"`
-	FilesStat map[string]FileDiffInfo `json:"files_stat"`
-
-	// Context metadata
-	TotalCommits   int `json:"total_commits"`
-	TotalFiles     int `json:"total_files"`
-	TotalAdditions int `json:"total_additions"`
-	TotalDeletions int `json:"total_deletions"`
-}
-
-type FileDiffInfo struct {
-	TotalAdditions int `json:"total_additions"`
-	TotalDeletions int `json:"total_deletions"`
-}
-
-// CommitInfo contains detailed commit information
-type CommitInfo struct {
-	SHA         string                      `json:"sha"`
-	Subject     string                      `json:"subject"`
-	Body        string                      `json:"body"`
-	Author      string                      `json:"author"`
-	Timestamp   time.Time                   `json:"timestamp"`
-	FileChanges map[string]CommitFileChange `json:"file_changes"`
-	TotalFiles  int                         `json:"total_files"`
-}
-
-// CommitFileChange represents file changes in a specific commit
-type CommitFileChange struct {
-	Status    string `json:"status"`    // added, modified, deleted, renamed
-	Additions int    `json:"additions"` // lines added in this file
-	Deletions int    `json:"deletions"` // lines deleted in this file
-	OldPath   string `json:"old_path"`  // for renamed files
-	NewPath   string `json:"new_path"`  // current file path
-	IsBinary  bool   `json:"is_binary"` // whether file is binary
-}
-
-// LinkedIssue represents a linked GitHub/GitLab issue
-type LinkedIssue struct {
-	ID          string   `json:"id"`
-	Number      int      `json:"number"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	State       string   `json:"state"`
-	URL         string   `json:"url"`
-	Labels      []string `json:"labels"`
-}
-
-// LinkedTicket represents a linked Jira/external ticket
-type LinkedTicket struct {
-	ID          string `json:"id"`
-	Key         string `json:"key"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Status      string `json:"status"`
-	URL         string `json:"url"`
-	Type        string `json:"type"`
-}
-
-// BuildContextSummary creates a structured summary of the MR context for use in prompts
-func (mrContext *MRContext) BuildContextSummary() string {
-	var summary strings.Builder
-	summary.Grow(2000) // Pre-allocate reasonable capacity
-
-	summary.WriteString("# MERGE REQUEST CONTEXT\n\n")
-
-	// Basic MR information
-	summary.WriteString("## Basic Information\n")
-	summary.WriteString("- Title: ")
-	summary.WriteString(mrContext.Title)
-	summary.WriteString("\n- Branch: `")
-	summary.WriteString(mrContext.BranchName)
-	summary.WriteString("`\n- Author: ")
-	summary.WriteString(mrContext.Author.Name)
-	summary.WriteString(" (@")
-	summary.WriteString(mrContext.Author.Username)
-	summary.WriteString(")\n")
-
-	// Original description (filtered from AI content)
-	if mrContext.Description != "" {
-		summary.WriteString("- Original Description:\n```\n")
-		summary.WriteString(mrContext.Description)
-		summary.WriteString("\n```\n")
-	}
-
-	// Statistics
-	summary.WriteString("\n## Change Statistics\n")
-	summary.WriteString("Total Changes: +")
-	summary.WriteString(intToString(mrContext.TotalAdditions))
-	summary.WriteString(" additions, -")
-	summary.WriteString(intToString(mrContext.TotalDeletions))
-	summary.WriteString(" deletions across ")
-	summary.WriteString(intToString(mrContext.TotalFiles))
-	summary.WriteString(" files\n")
-
-	// Show top changed files
-	mostChanged := mrContext.getMostChangedFiles(5)
-	if len(mostChanged) > 0 {
-		summary.WriteString("Most Changed Files:\n")
-		for _, file := range mostChanged {
-			summary.WriteString("  - ")
-			summary.WriteString(file.FilePath)
-			summary.WriteString(": +")
-			summary.WriteString(intToString(file.Additions))
-			summary.WriteString(", -")
-			summary.WriteString(intToString(file.Deletions))
-			summary.WriteString(" (")
-			summary.WriteString(intToString(file.TotalChanges))
-			summary.WriteString(" total)\n")
-		}
-	}
-	summary.WriteString("\n## Commits: ")
-	summary.WriteString(intToString(mrContext.TotalCommits))
-	summary.WriteString(" commits\n")
-	for i, commit := range mrContext.Commits {
-		// Commit header with short SHA
-		summary.WriteString(fmt.Sprintf("%d. ", i+1))
-		summary.WriteString(commit.Subject)
-		summary.WriteString(" (@") // Author
-		summary.WriteString(commit.Author)
-		summary.WriteString(")\nTime: ")
-		summary.WriteString(commit.Timestamp.Format(time.RFC3339))
-		summary.WriteString("\nFiles: ")
-		summary.WriteString(intToString(commit.TotalFiles))
-		summary.WriteString("\n")
-
-		// File changes in this commit
-		if len(commit.FileChanges) > 0 {
-			for _, change := range sortByTotalChanges(commit.FileChanges) {
-				filePath := change.NewPath
-				if filePath == "" {
-					filePath = change.OldPath
-				}
-
-				summary.WriteString("  - ")
-				summary.WriteString(filePath)
-				summary.WriteString(": [")
-				summary.WriteString(change.Status)
-				summary.WriteString("]: +")
-				summary.WriteString(intToString(change.Additions))
-				summary.WriteString(", -")
-				summary.WriteString(intToString(change.Deletions))
-
-				// Show rename information
-				if change.Status == "renamed" && change.OldPath != "" && change.OldPath != change.NewPath {
-					summary.WriteString(" (from ")
-					summary.WriteString(change.OldPath)
-					summary.WriteString(")")
-				}
-
-				// Binary file indicator
-				if change.IsBinary {
-					summary.WriteString(" [binary]")
-				}
-
-				summary.WriteString("\n")
-			}
-		}
-
-		// Commit body if available and not too long
-		if commit.Body != "" && len(commit.Body) <= 200 {
-			summary.WriteString("  Description: ")
-			summary.WriteString(commit.Body)
-			summary.WriteString("\n")
-		} else if commit.Body != "" {
-			summary.WriteString("  Description: ")
-			summary.WriteString(commit.Body[:197])
-			summary.WriteString("...\n")
-		}
-
-		summary.WriteString("\n")
-	}
-
-	// Linked issues and tickets
-	if len(mrContext.LinkedIssues) > 0 || len(mrContext.LinkedTickets) > 0 {
-		summary.WriteString("\n## Linked References\n")
-
-		if len(mrContext.LinkedIssues) > 0 {
-			summary.WriteString("- Issues: ")
-			for i, issue := range mrContext.LinkedIssues {
-				if i > 0 {
-					summary.WriteString(", ")
-				}
-				summary.WriteString("#")
-				summary.WriteString(intToString(issue.Number))
-			}
-			summary.WriteString("\n")
-		}
-
-		if len(mrContext.LinkedTickets) > 0 {
-			summary.WriteString("- Tickets: ")
-			for i, ticket := range mrContext.LinkedTickets {
-				if i > 0 {
-					summary.WriteString(", ")
-				}
-				summary.WriteString(ticket.Key)
-			}
-			summary.WriteString("\n")
-		}
-	}
-
-	// Author comments (provide context about author's intentions)
-	if len(mrContext.AuthorComments) > 0 {
-		summary.WriteString("\n## Author Comments & Context\n")
-		for i, comment := range mrContext.AuthorComments {
-			if i >= 3 {
-				summary.WriteString("- ... and ")
-				summary.WriteString(intToString(len(mrContext.AuthorComments) - 3))
-				summary.WriteString(" more comments\n")
-				break
-			}
-			summary.WriteString("- ")
-			// Truncate long comments
-			commentBody := comment.Body
-			if len(commentBody) > 150 {
-				commentBody = commentBody[:150] + "..."
-			}
-			summary.WriteString(commentBody)
-			summary.WriteString("\n")
-		}
-	}
-
-	return summary.String()
-}
 
 const (
 	startMarkerDesc = "<!-- Codry: ai-desc-start -->"
@@ -283,69 +35,53 @@ var aiMarkers = []struct {
 	{startMarkerCodeReview, endMarkerCodeReview},
 }
 
-// mrContextBuilder gathers comprehensive metadata about merge requests
-type mrContextBuilder struct {
-	provider interfaces.CodeProvider
-	log      logze.Logger
-}
-
-// newMRContextBuilder creates a new context manager
-func newMRContextBuilder(provider interfaces.CodeProvider) *mrContextBuilder {
-	return &mrContextBuilder{
-		provider: provider,
-		log:      logze.With("component", "mr_context_builder"),
-	}
-}
-
-type mrContextRequest struct {
-	ProjectID    string
-	MergeRequest *model.MergeRequest
-	Diffs        []*model.FileDiff
-	Comments     []*model.Comment
-	Commits      []*model.Commit
-}
-
 // GatherMRContext collects comprehensive metadata about a merge request
-func (cm *mrContextBuilder) gatherMRContext(ctx context.Context, request mrContextRequest) (*MRContext, error) {
-	log := cm.log.WithFields("project_id", request.ProjectID, "mr_iid", request.MergeRequest.IID)
+func gatherMRContext(projectID string, data *repoDataProvider) (*MRContext, error) {
+	log := logze.With("project_id", projectID, "mr_iid", data.mr.IID)
 
 	mrContext := &MRContext{
-		Title:      request.MergeRequest.Title,
-		BranchName: request.MergeRequest.SourceBranch,
-		Author:     request.MergeRequest.Author,
-		CreatedAt:  request.MergeRequest.CreatedAt,
-		UpdatedAt:  request.MergeRequest.UpdatedAt,
+		IID:          data.mr.IID,
+		IIDStr:       strconv.Itoa(data.mr.IID),
+		SourceBranch: data.mr.SourceBranch,
+		TargetBranch: data.mr.TargetBranch,
+		SHA:          data.mr.SHA,
+		Title:        data.mr.Title,
+		BranchName:   data.mr.SourceBranch,
+		Author:       data.mr.Author,
+		CreatedAt:    data.mr.CreatedAt,
+		UpdatedAt:    data.mr.UpdatedAt,
+		FileDiffs:    data.diffs,
 	}
 
 	// Step 1: Process description and filter AI content
-	if err := cm.processDescription(request.MergeRequest.Description, mrContext); err != nil {
+	if err := processDescription(data.mr.Description, mrContext); err != nil {
 		log.Warn("failed to process description", "error", err)
-		mrContext.Description = request.MergeRequest.Description
+		mrContext.Description = data.mr.Description
 	}
 
 	// Step 3: Gather author comments
-	if err := cm.gatherAuthorComments(ctx, request, mrContext); err != nil {
+	if err := gatherAuthorComments(data, mrContext); err != nil {
 		log.Warn("failed to gather author comments", "error", err)
 	}
 
 	// Step 4: Gather commit information
-	if err := cm.gatherCommitInfo(ctx, request, mrContext, log); err != nil {
+	if err := gatherCommitInfo(data, mrContext, log); err != nil {
 		log.Warn("failed to gather commit info", "error", err)
 	}
 
 	// Step 5: Extract linked issues and tickets
-	if err := cm.extractLinkedReferences(mrContext); err != nil {
+	if err := extractLinkedReferences(mrContext); err != nil {
 		log.Warn("failed to extract linked references", "error", err)
 	}
 
 	// Step 6: Calculate metadata statistics
-	cm.calculateMetadata(mrContext)
+	calculateMetadata(mrContext)
 
 	return mrContext, nil
 }
 
 // processDescription filters out AI-generated content using markers
-func (cm *mrContextBuilder) processDescription(originalDesc string, mrContext *MRContext) error {
+func processDescription(originalDesc string, mrContext *MRContext) error {
 	if originalDesc == "" {
 		mrContext.Description = ""
 		return nil
@@ -372,13 +108,13 @@ func (cm *mrContextBuilder) processDescription(originalDesc string, mrContext *M
 }
 
 // gatherAuthorComments collects all comments made by the MR author
-func (cm *mrContextBuilder) gatherAuthorComments(ctx context.Context, request mrContextRequest, mrContext *MRContext) error {
+func gatherAuthorComments(data *repoDataProvider, mrContext *MRContext) error {
 
 	var authorComments []*model.Comment
 
 commentsCycle:
-	for _, comment := range request.Comments {
-		if comment.Author.Username == request.MergeRequest.Author.Username {
+	for _, comment := range data.allComments {
+		if comment.Author.Username == data.mr.Author.Username {
 			for _, marker := range aiMarkers {
 				if strings.Contains(comment.Body, marker.start) {
 					continue commentsCycle
@@ -393,46 +129,27 @@ commentsCycle:
 }
 
 // gatherCommitInfo collects detailed commit information using provider APIs
-func (cm *mrContextBuilder) gatherCommitInfo(ctx context.Context, request mrContextRequest, mrContext *MRContext, log logze.Logger) error {
-
-	commits := request.Commits
-
-	log.Debug("retrieved commits from provider", "commit_count", len(commits))
+func gatherCommitInfo(data *repoDataProvider, mrContext *MRContext, log logze.Logger) error {
 
 	// Convert provider commits to our internal format with file changes
-	for _, commit := range commits {
-		commitInfo, err := cm.processCommit(ctx, request, commit, mrContext)
-		if err != nil {
-			log.Warn("failed to process commit, skipping", "commit_sha", commit.SHA, "error", err)
-			continue
-		}
+	for _, commit := range data.commits {
+		commitInfo := processCommit(commit, data.commitsDiff)
 		mrContext.Commits = append(mrContext.Commits, *commitInfo)
-	}
-
-	// If no commits were successfully processed, fall back to the old method
-	if len(mrContext.Commits) == 0 {
-		log.Warn("no commits were successfully processed, using fallback")
-		return cm.gatherCommitInfoFallback(request.MergeRequest, mrContext)
 	}
 
 	return nil
 }
 
 // processCommit converts a provider commit to our internal format with file changes
-func (cm *mrContextBuilder) processCommit(ctx context.Context, request mrContextRequest, commit *model.Commit, mrContext *MRContext) (*CommitInfo, error) {
-	// Get file changes for this specific commit
-	fileDiffs, err := cm.provider.GetCommitDiffs(ctx, request.ProjectID, commit.SHA)
-	if err != nil {
-		return nil, errm.Wrap(err, "failed to get commit diffs")
-	}
+func processCommit(commit *model.Commit, commitDiff []*model.FileDiff) *CommitInfo {
 
-	// Convert file diffs to our commit file changes format
+	// Convert file diffs to our commit file change	s format
 	fileChanges := make(map[string]CommitFileChange)
-	for _, fileDiff := range fileDiffs {
-		status := cm.determineFileStatus(fileDiff)
+	for _, fileDiff := range commitDiff {
+		status := determineFileStatus(fileDiff)
 
 		// Parse the diff to count additions/deletions
-		additions, deletions := cm.parseDiffStats(fileDiff.Diff)
+		additions, deletions := parseDiffStats(fileDiff.Diff)
 
 		fileChange := CommitFileChange{
 			Status:    status,
@@ -463,58 +180,11 @@ func (cm *mrContextBuilder) processCommit(ctx context.Context, request mrContext
 		TotalFiles:  len(fileChanges),
 	}
 
-	return commitInfo, nil
-}
-
-// gatherCommitInfoFallback is the fallback method when provider APIs fail
-func (cm *mrContextBuilder) gatherCommitInfoFallback(mr *model.MergeRequest, mrContext *MRContext) error {
-	if mr.SHA != "" {
-		// Create a commit entry representing the current state of the MR
-		fileChanges := make(map[string]CommitFileChange)
-
-		// Map file diffs to commit file changes
-		for _, fileDiff := range mrContext.FileDiffs {
-			status := cm.determineFileStatus(fileDiff)
-
-			// Parse the diff to count additions/deletions
-			additions, deletions := cm.parseDiffStats(fileDiff.Diff)
-
-			fileChange := CommitFileChange{
-				Status:    status,
-				Additions: additions,
-				Deletions: deletions,
-				OldPath:   fileDiff.OldPath,
-				NewPath:   fileDiff.NewPath,
-				IsBinary:  fileDiff.IsBinary,
-			}
-
-			// Use new path as key, fallback to old path for deleted files
-			key := fileDiff.NewPath
-			if key == "" {
-				key = fileDiff.OldPath
-			}
-
-			fileChanges[key] = fileChange
-		}
-
-		commit := CommitInfo{
-			SHA:         mr.SHA,
-			Subject:     cm.generateCommitSubject(mr, fileChanges),
-			Body:        cm.generateCommitBody(mr, len(fileChanges)),
-			Author:      mr.Author.Name,
-			Timestamp:   mr.UpdatedAt,
-			FileChanges: fileChanges,
-			TotalFiles:  len(fileChanges),
-		}
-
-		mrContext.Commits = append(mrContext.Commits, commit)
-	}
-
-	return nil
+	return commitInfo
 }
 
 // determineFileStatus determines the status of a file change
-func (cm *mrContextBuilder) determineFileStatus(fileDiff *model.FileDiff) string {
+func determineFileStatus(fileDiff *model.FileDiff) string {
 	if fileDiff.IsNew {
 		return "added"
 	}
@@ -528,7 +198,7 @@ func (cm *mrContextBuilder) determineFileStatus(fileDiff *model.FileDiff) string
 }
 
 // parseDiffStats parses a diff string to count additions and deletions
-func (cm *mrContextBuilder) parseDiffStats(diff string) (additions, deletions int) {
+func parseDiffStats(diff string) (additions, deletions int) {
 	if diff == "" {
 		return 0, 0
 	}
@@ -546,7 +216,7 @@ func (cm *mrContextBuilder) parseDiffStats(diff string) (additions, deletions in
 }
 
 // generateCommitSubject creates a commit subject based on MR info
-func (cm *mrContextBuilder) generateCommitSubject(mr *model.MergeRequest, fileChanges map[string]CommitFileChange) string {
+func generateCommitSubject(mr *model.MergeRequest, fileChanges map[string]CommitFileChange) string {
 	// Try to extract meaningful subject from MR title or use default
 	if mr.Title != "" {
 		// Truncate title if too long for commit subject
@@ -569,7 +239,7 @@ func (cm *mrContextBuilder) generateCommitSubject(mr *model.MergeRequest, fileCh
 }
 
 // generateCommitBody creates a commit body with change summary
-func (cm *mrContextBuilder) generateCommitBody(mr *model.MergeRequest, fileCount int) string {
+func generateCommitBody(mr *model.MergeRequest, fileCount int) string {
 	var body strings.Builder
 
 	if mr.Description != "" && len(mr.Description) < 500 {
@@ -592,7 +262,7 @@ func (cm *mrContextBuilder) generateCommitBody(mr *model.MergeRequest, fileCount
 }
 
 // extractLinkedReferences extracts linked issues and tickets from title, description, and commits
-func (cm *mrContextBuilder) extractLinkedReferences(mrContext *MRContext) error {
+func extractLinkedReferences(mrContext *MRContext) error {
 	textToAnalyze := strings.Join([]string{
 		mrContext.Title,
 		mrContext.Description,
@@ -605,16 +275,16 @@ func (cm *mrContextBuilder) extractLinkedReferences(mrContext *MRContext) error 
 	}
 
 	// Extract GitHub/GitLab issues
-	mrContext.LinkedIssues = cm.extractIssueReferences(textToAnalyze)
+	mrContext.LinkedIssues = extractIssueReferences(textToAnalyze)
 
 	// Extract Jira tickets
-	mrContext.LinkedTickets = cm.extractTicketReferences(textToAnalyze)
+	mrContext.LinkedTickets = extractTicketReferences(textToAnalyze)
 
 	return nil
 }
 
 // extractIssueReferences finds GitHub/GitLab issue references
-func (cm *mrContextBuilder) extractIssueReferences(text string) []LinkedIssue {
+func extractIssueReferences(text string) []LinkedIssue {
 	var issues []LinkedIssue
 
 	// Common patterns for issue references
@@ -657,7 +327,7 @@ func (cm *mrContextBuilder) extractIssueReferences(text string) []LinkedIssue {
 }
 
 // extractTicketReferences finds Jira and other ticket references
-func (cm *mrContextBuilder) extractTicketReferences(text string) []LinkedTicket {
+func extractTicketReferences(text string) []LinkedTicket {
 	var tickets []LinkedTicket
 
 	// Common patterns for ticket references
@@ -698,7 +368,7 @@ func (cm *mrContextBuilder) extractTicketReferences(text string) []LinkedTicket 
 }
 
 // calculateMetadata computes statistics about the MR
-func (cm *mrContextBuilder) calculateMetadata(mrContext *MRContext) {
+func calculateMetadata(mrContext *MRContext) {
 	mrContext.TotalCommits = len(mrContext.Commits)
 	mrContext.TotalFiles = len(mrContext.FileDiffs)
 	mrContext.FilesStat = make(map[string]FileDiffInfo, len(mrContext.FileDiffs))
