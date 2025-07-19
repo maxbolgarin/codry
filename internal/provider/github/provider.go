@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
@@ -974,8 +975,12 @@ func (p *Provider) GetRepositorySnapshot(ctx context.Context, projectID, commitS
 		// Handle different blob encodings
 		switch blob.GetEncoding() {
 		case "base64":
-			decoded := blob.GetContent()
-			content = decoded
+			contentBytes, err := base64.StdEncoding.DecodeString(blob.GetContent())
+			if err != nil {
+				p.logger.Warn("failed to decode base64 content", "path", entry.GetPath(), "sha", entry.GetSHA(), "error", err)
+				continue
+			}
+			content = string(contentBytes)
 			isBinary = p.isBinaryContent(content)
 		case "utf-8":
 			content = blob.GetContent()

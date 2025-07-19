@@ -60,6 +60,8 @@ const (
 	SymbolTypeEnum      SymbolType = "enum"
 	SymbolTypePackage   SymbolType = "package"
 	SymbolTypeImport    SymbolType = "import"
+
+	SymbolTypeFunctionCall SymbolType = "function_call"
 )
 
 // AffectedSymbol represents a code symbol that was affected by changes

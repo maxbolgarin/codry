@@ -3,6 +3,7 @@ package astparser
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/maxbolgarin/codry/internal/model"
@@ -35,11 +36,35 @@ func (sa *Analyzer) AnalyzeSymbolUsage(ctx context.Context, data *model.Reposito
 		sa.log.Warn("failed to find symbol callers", "error", err, "symbol", symbol.Name)
 	}
 
+	// Deduplicate callers
+	resultCallers := make([]Caller, 0, len(usage.Callers))
+	callersCache := make(map[string]struct{})
+	for _, caller := range usage.Callers {
+		key := caller.FilePath + strconv.Itoa(caller.Line)
+		if _, ok := callersCache[key]; !ok {
+			resultCallers = append(resultCallers, caller)
+			callersCache[key] = struct{}{}
+		}
+	}
+	usage.Callers = resultCallers
+
 	// Analyze dependencies of this symbol
 	usage.Dependencies, err = sa.AnalyzeDependencies(ctx, data, symbol)
 	if err != nil {
 		sa.log.Warn("failed to analyze dependencies", "error", err, "symbol", symbol.Name)
 	}
+
+	// Deduplicate dependencies
+	resultDependencies := make([]Dependency, 0, len(usage.Dependencies))
+	dependenciesCache := make(map[string]struct{})
+	for _, dependency := range usage.Dependencies {
+		key := dependency.SourceFile + strconv.Itoa(dependency.Line)
+		if _, ok := dependenciesCache[key]; !ok {
+			resultDependencies = append(resultDependencies, dependency)
+			dependenciesCache[key] = struct{}{}
+		}
+	}
+	usage.Dependencies = resultDependencies
 
 	return usage, nil
 }
@@ -57,7 +82,6 @@ func (sa *Analyzer) FindSymbolCallers(ctx context.Context, data *model.Repositor
 	for _, file := range potentialFiles {
 		rootNode, err := sa.astParser.GetFileAST(ctx, file.Path, file.Content)
 		if err != nil {
-			sa.log.Warn("failed to parse file to AST", "error", err, "file", file.Path)
 			continue
 		}
 		sa.walkASTForCallers(rootNode, file.Content, file.Path, symbol, &callers)
@@ -75,17 +99,17 @@ func (sa *Analyzer) getAffectedFiles(data *model.RepositorySnapshot, symbol Affe
 			continue
 		}
 
-		// Include the same file for internal method calls, but be selective
-		if file.Path == symbol.FilePath {
-			// For methods/functions, check if there are internal calls within the same struct/class
-			if symbol.Type == "method" || symbol.Type == "function" {
-				// Look for method calls that could be internal
-				if strings.Contains(file.Content, symbol.Name+"(") {
-					files = append(files, file)
-				}
-			}
-			continue
-		}
+		// // Include the same file for internal method calls, but be selective
+		// if file.Path == symbol.FilePath {
+		// 	// For methods/functions, check if there are internal calls within the same struct/class
+		// 	if symbol.Type == SymbolTypeFunction || symbol.Type == SymbolTypeMethod {
+		// 		// Look for method calls that could be internal
+		// 		if strings.Contains(file.Content, symbol.Name+"(") {
+		// 			files = append(files, file)
+		// 		}
+		// 	}
+		// 	continue
+		// }
 
 		// Quick text-based check first (most efficient)
 		if strings.Contains(file.Content, symbol.Name) {
@@ -104,17 +128,14 @@ func (sa *Analyzer) walkASTForCallers(node *sitter.Node, content, filePath strin
 	if sa.isCallNode(nodeType) {
 		// Try different extraction methods for call names
 		callName := sa.extractCallNameFromNode(node, content)
-		sa.log.Debug("found call node", "file", filePath, "node_type", nodeType, "call_name", callName, "looking_for", symbol.Name)
-
 		if callName != "" && sa.isSymbolMatch(callName, symbol.Name) {
-			sa.log.Debug("matched symbol call", "call_name", callName, "symbol", symbol.Name)
 
 			call := Caller{
 				FilePath: filePath,
 				Name:     callName,
 				Snippet:  sa.getCallSiteSnippet(node, content),
 				Line:     int(node.StartPoint().Row) + 1,
-				Type:     "function_call",
+				Type:     SymbolTypeFunctionCall,
 			}
 
 			// Find the containing function
@@ -160,11 +181,9 @@ func (sa *Analyzer) isCallNode(nodeType string) bool {
 		}
 	}
 
-	// For debugging: also check if it contains certain keywords
 	if strings.Contains(nodeType, "call") ||
 		strings.Contains(nodeType, "invoke") ||
 		strings.Contains(nodeType, "selector") {
-		sa.log.Debug("potential call node found", "node_type", nodeType)
 		return true
 	}
 
@@ -340,19 +359,15 @@ func (sa *Analyzer) AnalyzeDependencies(ctx context.Context, data *model.Reposit
 			continue
 		}
 
-		sa.log.Debug("analyzing dependency", "dep_name", dep.Name, "symbol_file", symbol.FilePath)
-
 		// Find the definition of this dependency in the codebase
-		definition, found := sa.findSymbolDefinitionInSnapshot(ctx, data, dep.Name, symbol.FilePath)
+		definition, found := sa.findDefinitionByExactMatch(ctx, data, sa.cleanSymbolName(dep.Name), symbol.FilePath)
 		if found {
 			dep.SourceFile = definition.FilePath
 			dep.SourceCode = definition.Code
 			dep.Documentation = definition.Documentation
-			sa.log.Debug("found dependency definition", "dep_name", dep.Name, "source_file", definition.FilePath)
 		} else {
 			dep.SourceFile = "external"
 			dep.SourceCode = "// " + dep.Name + "() - definition not found in current scope"
-			sa.log.Debug("dependency not found", "dep_name", dep.Name)
 		}
 
 		dependencies = append(dependencies, dep)
@@ -369,24 +384,6 @@ type SymbolDefinition struct {
 	Documentation string
 }
 
-// findSymbolDefinitionInSnapshotImproved uses enhanced search to find symbol definitions
-func (sa *Analyzer) findSymbolDefinitionInSnapshot(ctx context.Context, data *model.RepositorySnapshot, symbolName, originFilePath string) (SymbolDefinition, bool) {
-	// Clean the symbol name (remove receiver patterns like "cf.processFileDiff" -> "processFileDiff")
-	cleanSymbolName := sa.cleanSymbolName(symbolName)
-
-	// Try exact match first (most common case)
-	if definition, found := sa.findDefinitionByExactMatch(ctx, data, cleanSymbolName, originFilePath); found {
-		return definition, true
-	}
-
-	// Try same package (second most common)
-	if definition, found := sa.findDefinitionInSamePackage(ctx, data, cleanSymbolName, originFilePath); found {
-		return definition, true
-	}
-
-	return SymbolDefinition{}, false
-}
-
 // cleanSymbolName extracts the actual symbol name from qualified names
 func (sa *Analyzer) cleanSymbolName(symbolName string) string {
 	// Handle patterns like "cf.processFileDiff" -> "processFileDiff"
@@ -397,11 +394,31 @@ func (sa *Analyzer) cleanSymbolName(symbolName string) string {
 	return symbolName
 }
 
+var configExts = map[string]struct{}{
+	".json":   {},
+	".yaml":   {},
+	".yml":    {},
+	".toml":   {},
+	".env":    {},
+	".ini":    {},
+	".conf":   {},
+	".config": {},
+	".md":     {},
+	".txt":    {},
+	".log":    {},
+	"":        {},
+}
+
 // findDefinitionByExactMatch finds definitions using AST-based symbol detection (rewritten for accuracy)
 func (sa *Analyzer) findDefinitionByExactMatch(ctx context.Context, data *model.RepositorySnapshot, symbolName, originFilePath string) (SymbolDefinition, bool) {
+	originDir := filepath.Dir(originFilePath)
+
 	// First, check the same file where the symbol is used (most common case for method definitions)
 	for _, file := range data.Files {
 		if file.IsBinary {
+			continue
+		}
+		if _, isConfig := configExts[filepath.Ext(file.Path)]; isConfig {
 			continue
 		}
 
@@ -410,16 +427,6 @@ func (sa *Analyzer) findDefinitionByExactMatch(ctx context.Context, data *model.
 				return definition, true
 			}
 			break // We found the origin file, no need to continue this loop
-		}
-	}
-
-	// Then prioritize files in the same directory
-	originDir := filepath.Dir(originFilePath)
-
-	// Check same directory (excluding the origin file which we already checked)
-	for _, file := range data.Files {
-		if file.IsBinary {
-			continue
 		}
 
 		if filepath.Dir(file.Path) == originDir && file.Path != originFilePath {
@@ -435,6 +442,10 @@ func (sa *Analyzer) findDefinitionByExactMatch(ctx context.Context, data *model.
 			continue
 		}
 
+		if _, isConfig := configExts[filepath.Ext(file.Path)]; isConfig {
+			continue
+		}
+
 		// Skip files we already checked
 		if filepath.Dir(file.Path) == originDir {
 			continue
@@ -442,41 +453,6 @@ func (sa *Analyzer) findDefinitionByExactMatch(ctx context.Context, data *model.
 
 		if definition, found := sa.findDefinitionInFileWithAST(ctx, file, symbolName); found {
 			return definition, true
-		}
-	}
-
-	return SymbolDefinition{}, false
-}
-
-// findDefinitionInSamePackage prioritizes definitions in the same package/directory using AST
-func (sa *Analyzer) findDefinitionInSamePackage(ctx context.Context, data *model.RepositorySnapshot, symbolName, originFilePath string) (SymbolDefinition, bool) {
-	// First check the same file
-	for _, file := range data.Files {
-		if file.IsBinary {
-			continue
-		}
-
-		if file.Path == originFilePath {
-			if definition, found := sa.findDefinitionInFileWithAST(ctx, file, symbolName); found {
-				return definition, true
-			}
-			break
-		}
-	}
-
-	// Then check other files in the same directory
-	originDir := filepath.Dir(originFilePath)
-
-	for _, file := range data.Files {
-		if file.IsBinary {
-			continue
-		}
-
-		// Only check files in the same directory (excluding the origin file)
-		if filepath.Dir(file.Path) == originDir && file.Path != originFilePath {
-			if definition, found := sa.findDefinitionInFileWithAST(ctx, file, symbolName); found {
-				return definition, true
-			}
 		}
 	}
 
@@ -506,7 +482,6 @@ func (sa *Analyzer) walkASTForDefinition(node *sitter.Node, content, filePath, s
 	// Check for function definitions, variable declarations, etc.
 	if sa.astParser.IsSymbolNode(nodeType) {
 		extractedName := sa.astParser.extractSymbolName(node, content, filePath)
-		sa.log.Debug("checking node for definition", "node_type", nodeType, "extracted_name", extractedName, "looking_for", symbolName)
 
 		if extractedName == symbolName {
 			// Extract the complete code using AST node boundaries
@@ -523,7 +498,6 @@ func (sa *Analyzer) walkASTForDefinition(node *sitter.Node, content, filePath, s
 				Code:          strings.TrimSpace(fullCode),
 				Documentation: sa.extractDocumentation(node, content),
 			}
-			sa.log.Debug("found symbol definition", "symbol", symbolName, "file", filePath, "line", definition.LineNumber)
 			return true
 		}
 	}
